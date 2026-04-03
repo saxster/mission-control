@@ -24,6 +24,7 @@ import { SettingsPanel } from '@/components/panels/settings-panel'
 import { GatewayConfigPanel } from '@/components/panels/gateway-config-panel'
 import { IntegrationsPanel } from '@/components/panels/integrations-panel'
 import { AlertRulesPanel } from '@/components/panels/alert-rules-panel'
+import SkillEvolutionPanel from '@/components/panels/skill-evolution-panel'
 import { MultiGatewayPanel } from '@/components/panels/multi-gateway-panel'
 import { SuperAdminPanel } from '@/components/panels/super-admin-panel'
 import { OfficePanel } from '@/components/panels/office-panel'
@@ -541,6 +542,8 @@ function ContentRouter({ tab }: { tab: string }) {
       return <WebhookPanel />
     case 'alerts':
       return <AlertRulesPanel />
+    case 'evolution':
+      return <SkillEvolutionPanel />
     case 'gateways':
       if (isLocal) return <LocalModeUnavailable panel={tab} />
       return <MultiGatewayPanel />

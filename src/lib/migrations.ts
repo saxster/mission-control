@@ -1410,6 +1410,33 @@ const migrations: Migration[] = [
         )
       `)
     }
+  },
+  {
+    id: '049_evolution_runs',
+    up(db: Database.Database) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS evolution_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          target_type TEXT NOT NULL,
+          target_name TEXT NOT NULL,
+          baseline_fitness REAL,
+          evolved_fitness REAL,
+          improvement_pct REAL,
+          iterations INTEGER,
+          optimizer_model TEXT,
+          eval_model TEXT,
+          status TEXT NOT NULL DEFAULT 'running',
+          config TEXT,
+          lineage TEXT,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          completed_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_evolution_runs_target ON evolution_runs(target_type, target_name);
+        CREATE INDEX IF NOT EXISTS idx_evolution_runs_status ON evolution_runs(status);
+        CREATE INDEX IF NOT EXISTS idx_evolution_runs_created ON evolution_runs(created_at DESC);
+      `)
+    }
   }
 ]
 

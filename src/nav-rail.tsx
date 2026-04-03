@@ -46,6 +46,7 @@ const navGroups: NavGroup[] = [
       { id: 'spawn', label: 'Spawn', icon: <SpawnIcon />, priority: false },
       { id: 'webhooks', label: 'Webhooks', icon: <WebhookIcon />, priority: false },
       { id: 'alerts', label: 'Alerts', icon: <AlertIcon />, priority: false },
+      { id: 'evolution', label: 'Evolution', icon: <EvolutionIcon />, priority: false },
     ],
   },
   {
@@ -486,6 +487,16 @@ function AlertIcon() {
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M6 13h4M3.5 10c0-1-1-2-1-4a5.5 5.5 0 0111 0c0 2-1 3-1 4H3.5z" />
       <path d="M8 1v1" />
+    </svg>
+  )
+}
+
+function EvolutionIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12c2-4 4-2 6-6s4-2 6-6" />
+      <path d="M12 2l2-1M12 2l1 2" />
+      <circle cx="5" cy="9" r="1.5" />
     </svg>
   )
 }
