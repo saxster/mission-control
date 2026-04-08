@@ -22,7 +22,7 @@ export interface HermesMemory {
   userMemoryEntries: number
 }
 
-const MEMORY_DIR = () => join(config.homeDir, '.hermes', 'memories')
+const MEMORY_DIR = (hermesHome = join(config.homeDir, '.hermes')) => join(hermesHome, 'memories')
 
 function countSectionEntries(content: string): number {
   if (!content) return 0
@@ -48,8 +48,8 @@ function readMemoryFile(filePath: string): { content: string | null; size: numbe
   }
 }
 
-export function getHermesMemory(): HermesMemory {
-  const memDir = MEMORY_DIR()
+export function getHermesMemory(hermesHome?: string): HermesMemory {
+  const memDir = MEMORY_DIR(hermesHome)
 
   try {
     const agent = readMemoryFile(join(memDir, 'MEMORY.md'))

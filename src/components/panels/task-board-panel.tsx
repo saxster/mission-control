@@ -1956,36 +1956,143 @@ function ClaudeCodeTasksSection() {
   )
 }
 
+function formatHermesLedgerTime(timestamp: string | null | undefined) {
+  if (!timestamp) return 'Not yet run'
+  const parsed = new Date(timestamp)
+  if (Number.isNaN(parsed.getTime())) return timestamp
+  return parsed.toLocaleString()
+}
+
+function formatHermesRefreshTime(timestamp: number | null) {
+  if (!timestamp) return 'Not yet refreshed'
+  return new Date(timestamp).toLocaleTimeString()
+}
+
+function getHermesLedgerStatus(job: {
+  enabled: boolean
+  state?: string | null
+  lastStatus?: string | null
+  lastOutputKind?: string | null
+}) {
+  if (!job.enabled || job.state === 'paused') {
+    return {
+      label: 'Paused',
+      className: 'bg-muted text-muted-foreground',
+    }
+  }
+  if (job.state === 'running') {
+    return {
+      label: 'Running',
+      className: 'bg-blue-500/15 text-blue-400',
+    }
+  }
+  if (job.lastStatus === 'error') {
+    return {
+      label: 'Failing',
+      className: 'bg-red-500/15 text-red-400',
+    }
+  }
+  if (job.lastStatus === 'success') {
+    return {
+      label: job.lastOutputKind === 'silent' ? 'Silent success' : 'Healthy',
+      className: 'bg-green-500/15 text-green-400',
+    }
+  }
+  return {
+    label: 'Scheduled',
+    className: 'bg-purple-500/15 text-purple-400',
+  }
+}
+
 function HermesCronSection() {
   const t = useTranslations('taskBoard')
   const [expanded, setExpanded] = useState(false)
-  const [data, setData] = useState<{ cronJobs: any[] }>({ cronJobs: [] })
+  const [data, setData] = useState<{
+    cronJobs: Array<{
+      id: string
+      name: string
+      prompt: string
+      schedule: string
+      enabled: boolean
+      state: string
+      nextRunAt: string | null
+      lastRunAt: string | null
+      lastStatus: string | null
+      lastError: string | null
+      lastOutput: string | null
+      lastOutputKind: string | null
+      completedRuns: number
+      skills: string[]
+      profile?: string
+      profileLabel?: string
+      profileBadge?: string
+      runtimeProfileName?: string
+      runtimeProfileLabel?: string
+    }>
+    summary: {
+      total: number
+      enabled: number
+      paused: number
+      failing: number
+      healthy: number
+      scheduled: number
+    }
+  }>({
+    cronJobs: [],
+    summary: { total: 0, enabled: 0, paused: 0, failing: 0, healthy: 0, scheduled: 0 },
+  })
   const [loaded, setLoaded] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null)
+
+  const fetchHermesCronData = useCallback(() => {
+    if (!expanded) return
+    setRefreshing(true)
+    fetch('/api/hermes/tasks?force=true')
+      .then(r => r.json())
+      .then(d => {
+        setData(d)
+        setLoaded(true)
+        setLastRefreshedAt(Date.now())
+      })
+      .catch(() => setLoaded(true))
+      .finally(() => setRefreshing(false))
+  }, [expanded])
 
   useEffect(() => {
-    if (!expanded || loaded) return
-    fetch('/api/hermes/tasks')
-      .then(r => r.json())
-      .then(d => { setData(d); setLoaded(true) })
-      .catch(() => setLoaded(true))
-  }, [expanded, loaded])
+    if (!expanded) return
+    fetchHermesCronData()
+  }, [expanded, fetchHermesCronData])
+
+  useSmartPoll(fetchHermesCronData, 30000, { enabled: expanded, pauseWhenSseConnected: true })
 
   return (
     <div className="mt-4 border border-border rounded-lg overflow-hidden">
-      <button
-        onClick={() => setExpanded(prev => !prev)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-card hover:bg-secondary/50 transition-colors text-left"
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">{t('hermesScheduledTasks')}</span>
-          {data.cronJobs.length > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400">{data.cronJobs.length}</span>
-          )}
-        </div>
-        <span className="text-muted-foreground text-xs">{expanded ? t('collapse') : t('expand')}</span>
-      </button>
+      <div className="w-full flex items-center justify-between px-4 py-3 bg-card">
+        <button
+          onClick={() => setExpanded(prev => !prev)}
+          className="flex items-center justify-between flex-1 hover:bg-secondary/50 transition-colors text-left -my-3 -mx-4 px-4 py-3"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-foreground">{t('hermesScheduledTasks')}</span>
+            {data.cronJobs.length > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400">{data.cronJobs.length}</span>
+            )}
+          </div>
+          <span className="text-muted-foreground text-xs mr-3">{expanded ? t('collapse') : t('expand')}</span>
+        </button>
+        {expanded && (
+          <button
+            type="button"
+            onClick={fetchHermesCronData}
+            className="ml-3 text-[10px] text-blue-300 hover:text-blue-200 shrink-0"
+          >
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </button>
+        )}
+      </div>
       {expanded && (
-        <div className="p-4 border-t border-border space-y-2">
+        <div className="p-4 border-t border-border space-y-3">
           {!loaded ? (
             <div className="text-sm text-muted-foreground">{t('loading')}</div>
           ) : data.cronJobs.length === 0 ? (
@@ -1994,20 +2101,88 @@ function HermesCronSection() {
               <p className="text-xs mt-1 text-muted-foreground/70">{t('noScheduledTasksDesc')}</p>
             </div>
           ) : (
-            data.cronJobs.map((job: any) => (
-              <div key={job.id} className="flex items-center gap-3 px-3 py-2 rounded bg-surface-1 border border-border text-sm">
-                <span className={`text-[10px] font-mono shrink-0 ${job.enabled ? 'text-purple-400' : 'text-muted-foreground/50'}`}>
-                  {job.schedule || t('noSchedule')}
+            <>
+              <div className="text-[10px] text-muted-foreground">
+                Last refreshed: {formatHermesRefreshTime(lastRefreshedAt)}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-400">
+                  {data.summary.enabled} enabled
                 </span>
-                <span className="text-foreground flex-1 truncate">{job.prompt || job.id}</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded ${job.enabled ? 'bg-green-500/15 text-green-400' : 'bg-muted text-muted-foreground'}`}>
-                  {job.enabled ? t('enabled') : t('disabled')}
-                </span>
-                {job.lastRunAt && (
-                  <span className="text-[10px] text-muted-foreground/60 shrink-0">{job.lastRunAt}</span>
+                {data.summary.failing > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400">
+                    {data.summary.failing} failing
+                  </span>
+                )}
+                {data.summary.healthy > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400">
+                    {data.summary.healthy} healthy
+                  </span>
+                )}
+                {data.summary.paused > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
+                    {data.summary.paused} paused
+                  </span>
                 )}
               </div>
-            ))
+
+              {data.cronJobs.map((job) => {
+                const ledgerStatus = getHermesLedgerStatus(job)
+                return (
+                  <div key={job.id} className="rounded bg-surface-1 border border-border text-sm p-3 space-y-2">
+                    <div className="flex flex-wrap items-start gap-2">
+                      <span className="text-foreground font-medium flex-1 min-w-[220px]">
+                        {job.name || job.prompt || job.id}
+                      </span>
+                      {job.profileBadge && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300">
+                          {job.profileBadge}
+                        </span>
+                      )}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${ledgerStatus.className}`}>
+                        {ledgerStatus.label}
+                      </span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${job.enabled ? 'bg-green-500/15 text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                        {job.enabled ? t('enabled') : t('disabled')}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground/80">
+                      <span>Schedule: {job.schedule || t('noSchedule')}</span>
+                      <span>Next: {formatHermesLedgerTime(job.nextRunAt)}</span>
+                      <span>Last: {formatHermesLedgerTime(job.lastRunAt)}</span>
+                      <span>Runs: {job.completedRuns}</span>
+                      {job.profileLabel && <span>Profile: {job.profileLabel}</span>}
+                      {job.runtimeProfileLabel && <span>Runtime: {job.runtimeProfileLabel}</span>}
+                    </div>
+
+                    {(job.skills?.length || 0) > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {job.skills.map((skill) => (
+                          <span key={skill} className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="text-xs text-muted-foreground/90">
+                      {job.prompt || job.id}
+                    </div>
+
+                    {job.lastError ? (
+                      <div className="text-xs text-red-400 bg-red-500/10 rounded px-2 py-1.5 break-words">
+                        {job.lastError}
+                      </div>
+                    ) : job.lastOutput ? (
+                      <div className="text-xs text-muted-foreground bg-secondary/40 rounded px-2 py-1.5 whitespace-pre-wrap break-words">
+                        {job.lastOutput}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </>
           )}
         </div>
       )}

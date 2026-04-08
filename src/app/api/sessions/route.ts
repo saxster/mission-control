@@ -5,6 +5,12 @@ import { scanCodexSessions } from '@/lib/codex-sessions'
 import { scanHermesSessions } from '@/lib/hermes-sessions'
 import { getDatabase, db_helpers } from '@/lib/db'
 import { requireRole } from '@/lib/auth'
+import { HERMES_ROUTING_BINDINGS_SETTING_KEY, parseHermesRoutingBindings, resolveHermesBindingForSource } from '@/lib/hermes-routing'
+import {
+  HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY,
+  buildHermesRuntimeBindingTargets,
+  parseHermesRuntimeProfileBindings,
+} from '@/lib/hermes-runtime-profiles'
 import { callOpenClawGateway } from '@/lib/openclaw-gateway'
 import { mutationLimiter } from '@/lib/rate-limit'
 import { logger } from '@/lib/logger'
@@ -23,7 +29,14 @@ export async function GET(request: NextRequest) {
     await syncClaudeSessions()
     const claudeSessions = getLocalClaudeSessions()
     const codexSessions = getLocalCodexSessions()
-    const hermesSessions = getLocalHermesSessions()
+    const settingsStmt = getDatabase().prepare('SELECT value FROM settings WHERE key = ? LIMIT 1')
+    const hermesBindings = parseHermesRoutingBindings(
+      (settingsStmt.get(HERMES_ROUTING_BINDINGS_SETTING_KEY) as { value?: string } | undefined)?.value,
+    )
+    const hermesRuntimeBindings = parseHermesRuntimeProfileBindings(
+      (settingsStmt.get(HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY) as { value?: string } | undefined)?.value,
+    )
+    const hermesSessions = getLocalHermesSessions(hermesBindings, hermesRuntimeBindings)
     const localMerged = mergeLocalSessions(claudeSessions, codexSessions, hermesSessions)
 
     if (mappedGatewaySessions.length === 0 && localMerged.length === 0) {
@@ -277,15 +290,33 @@ function getLocalCodexSessions() {
   }
 }
 
-function getLocalHermesSessions() {
+function getLocalHermesSessions(
+  hermesBindings: Record<string, string> = {},
+  hermesRuntimeBindings: Record<string, string> = {},
+) {
   try {
-    const rows = scanHermesSessions(100)
+    const runtimeProfiles = buildHermesRuntimeBindingTargets(hermesRuntimeBindings)
+      .map((binding) => ({
+        name: binding.runtimeProfileName,
+        label: binding.runtimeProfileLabel,
+        hermesHome: binding.runtimeProfileHome,
+        envPath: '',
+        description: '',
+        isDefault: binding.runtimeProfileName === 'default',
+        exists: binding.runtimeProfileExists,
+      }))
+      .filter((profile, index, all) => all.findIndex((entry) => entry.name === profile.name) === index)
+    const rows = scanHermesSessions(100, runtimeProfiles)
 
     return rows.map((s) => {
+      const binding = resolveHermesBindingForSource(s.source || 'cli', hermesBindings)
       const total = s.inputTokens + s.outputTokens
       const lastMsg = s.lastMessageAt ? new Date(s.lastMessageAt).getTime() : 0
       const firstMsg = s.firstMessageAt ? new Date(s.firstMessageAt).getTime() : 0
       const effectiveLastActivity = s.isActive ? Date.now() : lastMsg
+      const flags = []
+      if (s.source && s.source !== 'cli') flags.push(s.source)
+      if (binding.profile !== 'primary') flags.push(binding.profileBadge)
       return {
         id: s.sessionId,
         key: s.title || s.sessionId,
@@ -295,11 +326,15 @@ function getLocalHermesSessions() {
         model: s.model || 'hermes',
         tokens: `${formatTokens(s.inputTokens)}/${formatTokens(s.outputTokens)}`,
         channel: s.source || 'cli',
-        flags: s.source && s.source !== 'cli' ? [s.source] : [],
+        flags,
         active: s.isActive,
         startTime: firstMsg,
         lastActivity: effectiveLastActivity,
         source: 'local' as const,
+        profile: binding.profile,
+        profileLabel: binding.profileLabel,
+        runtimeProfileName: s.runtimeProfileName,
+        runtimeProfileLabel: s.runtimeProfileLabel,
         userMessages: s.messageCount,
         assistantMessages: 0,
         toolUses: s.toolCallCount,

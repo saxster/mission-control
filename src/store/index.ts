@@ -242,6 +242,11 @@ export interface Conversation {
     agent?: string
     displayName?: string
     colorTag?: string
+    profile?: string
+    profileLabel?: string
+    runtimeProfileName?: string
+    runtimeProfileLabel?: string
+    source?: string
     model?: string
     tokens?: string
     workingDir?: string | null

@@ -28,6 +28,15 @@ export const WIDGET_CATALOG: DashboardWidget[] = [
     component: 'ActivityTimelineWidget',
   },
   {
+    id: 'hermes-ready',
+    label: 'Hermes Ready Right Now',
+    description: 'Bootstrap blockers, runtime state, channel coverage, and next actions',
+    category: 'health',
+    modes: ['local', 'full'],
+    defaultSize: 'md',
+    component: 'HermesReadyWidget',
+  },
+  {
     id: 'fleet-status',
     label: 'Fleet Status',
     description: 'Per-runtime activity sparklines, session counts, and cost',
@@ -149,6 +158,7 @@ export const WIDGET_CATALOG: DashboardWidget[] = [
 export const LOCAL_DEFAULT_LAYOUT = [
   'briefing-bar',
   'activity-timeline',
+  'hermes-ready',
   'fleet-status',
   'task-pipeline',
   'system-health',
@@ -158,6 +168,7 @@ export const LOCAL_DEFAULT_LAYOUT = [
 export const GATEWAY_DEFAULT_LAYOUT = [
   'briefing-bar',
   'activity-timeline',
+  'hermes-ready',
   'fleet-status',
   'task-pipeline',
   'system-health',

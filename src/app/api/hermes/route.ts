@@ -2,44 +2,158 @@ import { NextRequest, NextResponse } from 'next/server'
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { requireRole } from '@/lib/auth'
-import { config } from '@/lib/config'
-import { isHermesInstalled, isHermesGatewayRunning, scanHermesSessions } from '@/lib/hermes-sessions'
+import { getDatabase } from '@/lib/db'
+import { getHermesCommandContext, loadHermesBootstrapData, resolveHermesBinary } from '@/lib/hermes-bootstrap'
+import {
+  buildHermesRoutingSummary,
+  HERMES_ROUTING_BINDINGS_SETTING_KEY,
+  parseHermesRoutingBindings,
+  resolveHermesProfileLabel,
+} from '@/lib/hermes-routing'
+import {
+  buildHermesRuntimeBindingTargets,
+  discoverHermesRuntimeProfiles,
+  HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY,
+  isHermesRuntimeSplitActive,
+  listHermesRuntimeProfilesForPersonas,
+  parseHermesRuntimeProfileBindings,
+  resolveHermesRuntimeProfileByName,
+  resolveHermesRuntimeBindingForSource,
+} from '@/lib/hermes-runtime-profiles'
+import { hasHermesCliBinary, isHermesInstalled, isHermesGatewayRunning, scanHermesSessions } from '@/lib/hermes-sessions'
 import { getHermesTasks } from '@/lib/hermes-tasks'
 import { getHermesMemory } from '@/lib/hermes-memory'
 import { logger } from '@/lib/logger'
 
-// In Docker, HOME=/nonexistent — check dataDir first, then homeDir
-import { resolve } from 'node:path'
-const dataDir = resolve(config.dataDir || '.data')
-const homeDir = config.homeDir || ''
-const HERMES_HOME = existsSync(join(dataDir, '.hermes'))
-  ? join(dataDir, '.hermes')
-  : existsSync(join(homeDir, '.hermes'))
-    ? join(homeDir, '.hermes')
-    : join(dataDir, '.hermes') // default to dataDir for new installs
-const HOOK_DIR = join(HERMES_HOME, 'hooks', 'mission-control')
+const hermesCommandContext = getHermesCommandContext()
+
+function getHermesActionContext(runtimeProfileName?: string | null) {
+  const runtimeProfiles = discoverHermesRuntimeProfiles()
+  const selectedRuntimeProfile = resolveHermesRuntimeProfileByName(runtimeProfileName, runtimeProfiles)
+  return {
+    runtimeProfiles,
+    selectedRuntimeProfile,
+    commandContext: {
+      ...hermesCommandContext,
+      hermesHome: selectedRuntimeProfile.hermesHome,
+    },
+    hookDir: join(selectedRuntimeProfile.hermesHome, 'hooks', 'mission-control'),
+  }
+}
 
 export async function GET(request: NextRequest) {
   const auth = requireRole(request, 'viewer')
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
   try {
+    const forceTaskRefresh = request.nextUrl.searchParams.get('refresh') === 'tasks'
+    const runtimeProfileName = request.nextUrl.searchParams.get('runtimeProfileName')
     const installed = isHermesInstalled()
-    const gatewayRunning = installed ? isHermesGatewayRunning() : false
-    const hookInstalled = existsSync(join(HOOK_DIR, 'HOOK.yaml'))
-    const activeSessions = installed ? scanHermesSessions(50).filter(s => s.isActive).length : 0
+    const cliAvailable = hasHermesCliBinary()
+    const actionContext = getHermesActionContext(runtimeProfileName)
+    const hookInstalled = existsSync(join(actionContext.hookDir, 'HOOK.yaml'))
+    const storedBindingsStmt = getDatabase().prepare('SELECT value FROM settings WHERE key = ? LIMIT 1')
+    const routingBindings = parseHermesRoutingBindings(
+      (storedBindingsStmt.get(HERMES_ROUTING_BINDINGS_SETTING_KEY) as { value?: string } | undefined)?.value,
+    )
+    const runtimeProfileBindings = parseHermesRuntimeProfileBindings(
+      (storedBindingsStmt.get(HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY) as { value?: string } | undefined)?.value,
+    )
+    const runtimeProfiles = actionContext.runtimeProfiles
+    const selectedRuntimeProfile = actionContext.selectedRuntimeProfile
+    const sessionRuntimeProfiles = listHermesRuntimeProfilesForPersonas(
+      ['primary', 'personal', 'work', 'automation', 'research'],
+      runtimeProfileBindings,
+      runtimeProfiles,
+    )
+    const scopedRuntimeProfiles = runtimeProfileName ? [selectedRuntimeProfile] : sessionRuntimeProfiles
+    const gatewayRunning = installed
+      ? scopedRuntimeProfiles.some((profile) => isHermesGatewayRunning(profile.hermesHome))
+      : false
+    const hermesSessions = installed ? scanHermesSessions(50, scopedRuntimeProfiles) : []
+    const activeSessions = hermesSessions.filter(s => s.isActive).length
 
-    const cronJobCount = installed ? getHermesTasks().cronJobs.length : 0
-    const memoryEntries = installed ? getHermesMemory().agentMemoryEntries : 0
+    const cronRuntimeBinding = resolveHermesRuntimeBindingForSource('cron', routingBindings, runtimeProfileBindings, runtimeProfiles)
+    const selectedTaskProfile = runtimeProfileName
+      ? selectedRuntimeProfile
+      : {
+          name: cronRuntimeBinding.runtimeProfileName,
+          label: cronRuntimeBinding.runtimeProfileLabel,
+          description: '',
+          hermesHome: cronRuntimeBinding.runtimeProfileHome,
+          envPath: cronRuntimeBinding.runtimeProfileEnvPath,
+          isDefault: cronRuntimeBinding.runtimeProfileName === 'default',
+          exists: cronRuntimeBinding.runtimeProfileExists,
+        }
+    const taskData = installed ? getHermesTasks(forceTaskRefresh, [selectedTaskProfile]) : {
+      cronJobs: [],
+      summary: { total: 0, enabled: 0, paused: 0, failing: 0, healthy: 0, scheduled: 0 },
+    }
+    const cronJobCount = taskData.cronJobs.length
+    const memoryEntries = installed ? getHermesMemory(selectedRuntimeProfile.hermesHome).agentMemoryEntries : 0
+    const bootstrapData = installed && cliAvailable ? await loadHermesBootstrapData(actionContext.commandContext) : {
+      bootstrap: null,
+      providerReadiness: null,
+      gateway: null,
+      messagingPlatforms: [],
+      doctor: null,
+    }
+    const routingSummary = buildHermesRoutingSummary({
+      sessions: hermesSessions,
+      bindings: routingBindings,
+      messagingPlatforms: bootstrapData.messagingPlatforms.map((platform) => ({
+        name: typeof platform?.name === 'string' ? platform.name : undefined,
+        configured: platform?.configured === true,
+      })),
+      gateway: bootstrapData.gateway || undefined,
+      taskSummary: taskData.summary,
+    })
+    const runtimeBindingTargets = buildHermesRuntimeBindingTargets(runtimeProfileBindings, runtimeProfiles)
 
     return NextResponse.json({
       installed,
+      cliAvailable,
       gatewayRunning,
       hookInstalled,
       activeSessions,
       cronJobCount,
       memoryEntries,
-      hookDir: HOOK_DIR,
+      hookDir: actionContext.hookDir,
+      selectedRuntimeProfile: {
+        name: selectedRuntimeProfile.name,
+        label: selectedRuntimeProfile.label,
+        description: selectedRuntimeProfile.description,
+        hermesHome: selectedRuntimeProfile.hermesHome,
+        exists: selectedRuntimeProfile.exists,
+      },
+      bootstrap: bootstrapData.bootstrap,
+      providerReadiness: bootstrapData.providerReadiness,
+      gateway: bootstrapData.gateway,
+      messagingPlatforms: bootstrapData.messagingPlatforms,
+      doctor: bootstrapData.doctor,
+      routingBindings,
+      routingSummary,
+      runtimeProfileBindings,
+      runtimeProfiles,
+      runtimeBindingTargets,
+      runtimeSplitActive: isHermesRuntimeSplitActive(runtimeProfileBindings),
+      taskSummary: taskData.summary,
+      taskHighlights: taskData.cronJobs
+        .filter(job => job.lastStatus === 'error' || (job.enabled && job.state !== 'paused'))
+        .slice(0, 3)
+        .map(job => ({
+          id: job.id,
+          name: job.name,
+          state: job.state,
+          enabled: job.enabled,
+          schedule: job.schedule,
+          nextRunAt: job.nextRunAt,
+          lastRunAt: job.lastRunAt,
+          lastStatus: job.lastStatus,
+          lastError: job.lastError,
+          runtimeProfileName: job.runtimeProfileName || selectedTaskProfile.name,
+          runtimeProfileLabel: job.runtimeProfileLabel || selectedTaskProfile.label,
+        })),
     })
   } catch (err) {
     logger.error({ err }, 'Hermes status check failed')
@@ -64,6 +178,10 @@ function extractDeviceAuth(output: string): { cleanOutput: string; deviceUrl: st
   return { cleanOutput, deviceUrl, userCode }
 }
 
+function isValidHermesProfileName(value: string): boolean {
+  return /^[a-z0-9][a-z0-9-]*$/.test(value)
+}
+
 export async function POST(request: NextRequest) {
   const auth = requireRole(request, 'admin')
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
@@ -71,6 +189,14 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { action } = body
+    const actionContext = getHermesActionContext(typeof body?.runtimeProfileName === 'string' ? body.runtimeProfileName : null)
+    const HERMES_HOME = actionContext.selectedRuntimeProfile.hermesHome
+    const HOOK_DIR = actionContext.hookDir
+    const commandContext = actionContext.commandContext
+    const storedBindingsStmt = getDatabase().prepare('SELECT value FROM settings WHERE key = ? LIMIT 1')
+    const runtimeProfileBindings = parseHermesRuntimeProfileBindings(
+      (storedBindingsStmt.get(HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY) as { value?: string } | undefined)?.value,
+    )
 
     if (action === 'install-hook') {
       if (!isHermesInstalled()) {
@@ -85,8 +211,13 @@ export async function POST(request: NextRequest) {
       // Write handler.py
       writeFileSync(join(HOOK_DIR, 'handler.py'), HANDLER_PY, 'utf8')
 
-      logger.info('Installed Mission Control hook for Hermes Agent')
-      return NextResponse.json({ success: true, message: 'Hook installed', hookDir: HOOK_DIR })
+      logger.info({ runtimeProfileName: actionContext.selectedRuntimeProfile.name }, 'Installed Mission Control hook for Hermes Agent')
+      return NextResponse.json({
+        success: true,
+        message: 'Hook installed',
+        hookDir: HOOK_DIR,
+        runtimeProfileName: actionContext.selectedRuntimeProfile.name,
+      })
     }
 
     if (action === 'uninstall-hook') {
@@ -94,8 +225,12 @@ export async function POST(request: NextRequest) {
         rmSync(HOOK_DIR, { recursive: true, force: true })
       }
 
-      logger.info('Uninstalled Mission Control hook for Hermes Agent')
-      return NextResponse.json({ success: true, message: 'Hook uninstalled' })
+      logger.info({ runtimeProfileName: actionContext.selectedRuntimeProfile.name }, 'Uninstalled Mission Control hook for Hermes Agent')
+      return NextResponse.json({
+        success: true,
+        message: 'Hook uninstalled',
+        runtimeProfileName: actionContext.selectedRuntimeProfile.name,
+      })
     }
 
     if (action === 'set-env') {
@@ -109,6 +244,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Key must be one of: ${ALLOWED_KEYS.join(', ')}` }, { status: 400 })
       }
 
+      mkdirSync(HERMES_HOME, { recursive: true })
       const envPath = join(HERMES_HOME, '.env')
       let envContent = ''
       try { envContent = require('node:fs').readFileSync(envPath, 'utf8') } catch { /* new file */ }
@@ -122,8 +258,8 @@ export async function POST(request: NextRequest) {
       }
 
       writeFileSync(envPath, envContent, 'utf8')
-      logger.info({ key }, 'Hermes env var set via setup wizard')
-      return NextResponse.json({ success: true })
+      logger.info({ key, runtimeProfileName: actionContext.selectedRuntimeProfile.name }, 'Hermes env var set via setup wizard')
+      return NextResponse.json({ success: true, runtimeProfileName: actionContext.selectedRuntimeProfile.name })
     }
 
     if (action === 'set-soul') {
@@ -132,25 +268,26 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'content is required' }, { status: 400 })
       }
 
+      mkdirSync(HERMES_HOME, { recursive: true })
       const soulPath = join(HERMES_HOME, 'SOUL.md')
       writeFileSync(soulPath, content, 'utf8')
-      logger.info('Hermes SOUL.md updated via setup wizard')
-      return NextResponse.json({ success: true })
+      logger.info({ runtimeProfileName: actionContext.selectedRuntimeProfile.name }, 'Hermes SOUL.md updated via setup wizard')
+      return NextResponse.json({ success: true, runtimeProfileName: actionContext.selectedRuntimeProfile.name })
     }
 
     if (action === 'run-oauth-model') {
       const { model, provider, authMethod } = body
-      const hermesBin = join(HERMES_HOME, 'hermes-agent', 'venv', 'bin', 'hermes')
-      const bin = existsSync(hermesBin) ? hermesBin : 'hermes'
-      const HOME_DIR = existsSync(join(dataDir, '.hermes')) ? dataDir : homeDir
+      const bin = resolveHermesBinary(commandContext)
+      const HOME_DIR = commandContext.homeDir
       const baseEnv = {
         ...process.env,
         HOME: HOME_DIR,
-        PATH: `${join(dataDir, '.local', 'bin')}:${process.env.PATH || ''}`,
+        HERMES_HOME: HERMES_HOME,
+        PATH: `${commandContext.pathPrefix}:${process.env.PATH || ''}`,
       }
 
       try {
-        const { runCommand } = require('@/lib/command')
+        const { runCommand } = await import('@/lib/command')
 
         const requestedProvider = typeof provider === 'string' && provider.trim() ? provider.trim() : 'openai-codex'
         const providerForOAuth = requestedProvider === 'openai' ? 'openai-codex' : requestedProvider
@@ -264,21 +401,21 @@ export async function POST(request: NextRequest) {
 
       // Parse command into binary + args
       const parts = trimmed.split(/\s+/)
-      const hermesBin = join(HERMES_HOME, 'hermes-agent', 'venv', 'bin', 'hermes')
-      const bin = existsSync(hermesBin) ? hermesBin : parts[0]
+      const bin = resolveHermesBinary(commandContext)
       const args = parts.slice(1)
 
       // Add --non-interactive flags for commands that might prompt
       const env = {
         ...process.env,
-        HOME: existsSync(join(dataDir, '.hermes')) ? dataDir : homeDir,
+        HOME: commandContext.homeDir,
+        HERMES_HOME: HERMES_HOME,
         HERMES_NONINTERACTIVE: '1',
         CI: '1',
-        PATH: `${join(dataDir, '.local', 'bin')}:${process.env.PATH || ''}`,
+        PATH: `${commandContext.pathPrefix}:${process.env.PATH || ''}`,
       }
 
       try {
-        const { runCommand } = require('@/lib/command')
+        const { runCommand } = await import('@/lib/command')
         const result = await runCommand(bin, args, {
           timeoutMs: 30_000,
           env,
@@ -294,6 +431,160 @@ export async function POST(request: NextRequest) {
           error: err?.message || 'Command failed',
           output: (err?.stdout || '') + '\n' + (err?.stderr || ''),
         })
+      }
+    }
+
+    if (action === 'create-profile') {
+      if (!hasHermesCliBinary()) {
+        return NextResponse.json({ error: 'Hermes CLI is required to create runtime profiles.' }, { status: 400 })
+      }
+
+      const profileName = typeof body?.profileName === 'string' ? body.profileName.trim().toLowerCase() : ''
+      const cloneMode = body?.cloneMode === 'clone' ? 'clone' : 'blank'
+      const cloneFromProfileName = typeof body?.cloneFromProfileName === 'string' ? body.cloneFromProfileName.trim().toLowerCase() : 'default'
+
+      if (!profileName) {
+        return NextResponse.json({ error: 'profileName is required' }, { status: 400 })
+      }
+      if (profileName === 'default') {
+        return NextResponse.json({ error: 'The default Hermes profile already exists.' }, { status: 400 })
+      }
+      if (!isValidHermesProfileName(profileName)) {
+        return NextResponse.json({ error: 'Profile names must use lowercase letters, numbers, or dashes.' }, { status: 400 })
+      }
+      if (actionContext.runtimeProfiles.some((profile) => profile.name === profileName && profile.exists)) {
+        return NextResponse.json({ error: `Hermes runtime profile "${profileName}" already exists.` }, { status: 400 })
+      }
+      if (cloneMode === 'clone' && !actionContext.runtimeProfiles.some((profile) => profile.name === cloneFromProfileName && profile.exists)) {
+        return NextResponse.json({ error: `Clone source profile "${cloneFromProfileName}" was not found.` }, { status: 400 })
+      }
+
+      const profileCommandContext = {
+        ...hermesCommandContext,
+        hermesHome: hermesCommandContext.hermesHome,
+      }
+      const bin = resolveHermesBinary(profileCommandContext)
+      const args = ['profile', 'create', profileName, '--no-alias']
+      if (cloneMode === 'clone') {
+        args.push('--clone', '--clone-from', cloneFromProfileName || 'default')
+      }
+
+      try {
+        const { runCommand } = await import('@/lib/command')
+        const result = await runCommand(bin, args, {
+          timeoutMs: 30_000,
+          env: {
+            ...process.env,
+            HOME: profileCommandContext.homeDir,
+            HERMES_HOME: profileCommandContext.hermesHome,
+            HERMES_NONINTERACTIVE: '1',
+            CI: '1',
+            PATH: `${profileCommandContext.pathPrefix}:${process.env.PATH || ''}`,
+          },
+        })
+        if (result.code !== 0) {
+          return NextResponse.json({
+            success: false,
+            error: `Hermes could not create runtime profile "${profileName}".`,
+            output: (result.stdout + '\n' + result.stderr).trim(),
+          }, { status: 400 })
+        }
+        const refreshed = getHermesActionContext(profileName)
+        return NextResponse.json({
+          success: true,
+          profileName,
+          runtimeProfiles: refreshed.runtimeProfiles,
+          selectedRuntimeProfile: {
+            name: refreshed.selectedRuntimeProfile.name,
+            label: refreshed.selectedRuntimeProfile.label,
+            description: refreshed.selectedRuntimeProfile.description,
+            hermesHome: refreshed.selectedRuntimeProfile.hermesHome,
+            exists: refreshed.selectedRuntimeProfile.exists,
+          },
+          output: (result.stdout + '\n' + result.stderr).trim(),
+        })
+      } catch (err: any) {
+        return NextResponse.json({
+          success: false,
+          error: err?.message || 'Profile creation failed',
+          output: ((err?.stdout || '') + '\n' + (err?.stderr || '')).trim(),
+        }, { status: 500 })
+      }
+    }
+
+    if (action === 'delete-profile') {
+      if (!hasHermesCliBinary()) {
+        return NextResponse.json({ error: 'Hermes CLI is required to delete runtime profiles.' }, { status: 400 })
+      }
+
+      const profileName = typeof body?.profileName === 'string' ? body.profileName.trim().toLowerCase() : ''
+      if (!profileName) {
+        return NextResponse.json({ error: 'profileName is required' }, { status: 400 })
+      }
+      if (profileName === 'default') {
+        return NextResponse.json({ error: 'The default Hermes profile cannot be deleted.' }, { status: 400 })
+      }
+      if (!isValidHermesProfileName(profileName)) {
+        return NextResponse.json({ error: 'Profile names must use lowercase letters, numbers, or dashes.' }, { status: 400 })
+      }
+      if (!actionContext.runtimeProfiles.some((profile) => profile.name === profileName && profile.exists)) {
+        return NextResponse.json({ error: `Hermes runtime profile "${profileName}" does not exist.` }, { status: 404 })
+      }
+      const boundPersonas = Object.entries(runtimeProfileBindings)
+        .filter(([, runtimeProfileName]) => String(runtimeProfileName || '').trim().toLowerCase() === profileName)
+        .map(([persona]) => resolveHermesProfileLabel(persona))
+      if (boundPersonas.length > 0) {
+        return NextResponse.json({
+          error: `Hermes runtime profile "${profileName}" is still bound to ${boundPersonas.join(', ')}.`,
+        }, { status: 400 })
+      }
+
+      const profileCommandContext = {
+        ...hermesCommandContext,
+        hermesHome: hermesCommandContext.hermesHome,
+      }
+      const bin = resolveHermesBinary(profileCommandContext)
+
+      try {
+        const { runCommand } = await import('@/lib/command')
+        const result = await runCommand(bin, ['profile', 'delete', profileName, '--yes'], {
+          timeoutMs: 30_000,
+          env: {
+            ...process.env,
+            HOME: profileCommandContext.homeDir,
+            HERMES_HOME: profileCommandContext.hermesHome,
+            HERMES_NONINTERACTIVE: '1',
+            CI: '1',
+            PATH: `${profileCommandContext.pathPrefix}:${process.env.PATH || ''}`,
+          },
+        })
+        if (result.code !== 0) {
+          return NextResponse.json({
+            success: false,
+            error: `Hermes could not delete runtime profile "${profileName}".`,
+            output: (result.stdout + '\n' + result.stderr).trim(),
+          }, { status: 400 })
+        }
+        const refreshed = getHermesActionContext('default')
+        return NextResponse.json({
+          success: true,
+          profileName,
+          runtimeProfiles: refreshed.runtimeProfiles,
+          selectedRuntimeProfile: {
+            name: refreshed.selectedRuntimeProfile.name,
+            label: refreshed.selectedRuntimeProfile.label,
+            description: refreshed.selectedRuntimeProfile.description,
+            hermesHome: refreshed.selectedRuntimeProfile.hermesHome,
+            exists: refreshed.selectedRuntimeProfile.exists,
+          },
+          output: (result.stdout + '\n' + result.stderr).trim(),
+        })
+      } catch (err: any) {
+        return NextResponse.json({
+          success: false,
+          error: err?.message || 'Profile deletion failed',
+          output: ((err?.stdout || '') + '\n' + (err?.stderr || '')).trim(),
+        }, { status: 500 })
       }
     }
 

@@ -747,6 +747,7 @@ export function ActivityTab({ agent }: { agent: Agent }) {
       case 'task_created': return '+'
       case 'task_updated': return '>'
       case 'comment_added': return '#'
+      case 'hermes_session_started': return 'H'
       case 'agent_heartbeat': return '*'
       case 'agent_soul_updated': return '@'
       case 'agent_memory_updated': return '='

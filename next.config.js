@@ -1,12 +1,16 @@
 const withNextIntl = require('next-intl/plugin')('./src/i18n/request.ts')
+const projectRoot = __dirname
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  outputFileTracingRoot: projectRoot,
   outputFileTracingExcludes: {
     '/*': ['./.data/**/*'],
   },
-  turbopack: {},
+  turbopack: {
+    root: projectRoot,
+  },
   // Transpile ESM-only packages so they resolve correctly in all environments
   transpilePackages: ['react-markdown', 'remark-gfm'],
   

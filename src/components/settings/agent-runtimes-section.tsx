@@ -10,6 +10,7 @@ interface RuntimeStatus {
   name: string
   description: string
   installed: boolean
+  cliAvailable?: boolean
   version: string | null
   running: boolean
   authRequired: boolean
@@ -166,6 +167,7 @@ export function AgentRuntimesSection({ showFeedback }: Props) {
           const isInstalling = job?.status === 'running' || job?.status === 'pending'
           const installFailed = job?.status === 'failed'
           const justInstalled = job?.status === 'success'
+          const hermesCliAvailable = rt.id === 'hermes' ? rt.cliAvailable !== false : true
 
           return (
             <div
@@ -218,8 +220,12 @@ export function AgentRuntimesSection({ showFeedback }: Props) {
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium">{rt.name}</span>
                         {rt.installed || justInstalled ? (
-                          <span className="text-2xs px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
-                            {rt.version ? `v${rt.version}` : 'Installed'}
+                          <span className={`text-2xs px-1.5 py-0.5 rounded-full border ${
+                            rt.id === 'hermes' && !hermesCliAvailable
+                              ? 'bg-blue-500/15 text-blue-300 border-blue-500/20'
+                              : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20'
+                          }`}>
+                            {rt.id === 'hermes' && !hermesCliAvailable ? 'State detected' : rt.version ? `v${rt.version}` : 'Installed'}
                           </span>
                         ) : (
                           <span className="text-2xs px-1.5 py-0.5 rounded-full bg-muted/30 text-muted-foreground border border-border/20">
@@ -251,6 +257,12 @@ export function AgentRuntimesSection({ showFeedback }: Props) {
                     </div>
 
                     <p className="text-xs text-muted-foreground/70">{rt.description}</p>
+
+                    {rt.id === 'hermes' && rt.installed && !hermesCliAvailable && (
+                      <p className="text-2xs mt-1 text-blue-300">
+                        Hermes state is present in <code>~/.hermes</code>, but this station cannot run the Hermes CLI yet.
+                      </p>
+                    )}
 
                     {rt.installed && rt.authRequired && (
                       <p className={`text-2xs mt-1 ${rt.authenticated ? 'text-emerald-400/70' : 'text-amber-400'}`}>

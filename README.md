@@ -386,6 +386,8 @@ pnpm build            # Production build
 pnpm typecheck        # TypeScript check
 pnpm lint             # ESLint
 pnpm test             # Vitest unit tests (282)
+pnpm test:hermes      # Focused Hermes unit/regression bundle
+pnpm test:hermes:full # Hermes unit bundle + operator-path Playwright check
 pnpm test:e2e         # Playwright E2E (295)
 pnpm quality:gate     # All checks
 ```

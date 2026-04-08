@@ -23,6 +23,91 @@ export interface ClaudeStats {
   unique_projects: number
 }
 
+export interface HermesDashboardStatus {
+  installed: boolean
+  cliAvailable?: boolean
+  gatewayRunning: boolean
+  hookInstalled: boolean
+  activeSessions: number
+  cronJobCount?: number
+  memoryEntries?: number
+  bootstrap?: {
+    ready: boolean
+    blocking_checks: Array<{ code: string; message: string }>
+    recommended_next_steps: string[]
+    issue_count: number
+  } | null
+  providerReadiness?: {
+    configured: boolean
+    env_configured: boolean
+    config_configured: boolean
+    oauth?: {
+      nous?: boolean
+      openai_codex?: boolean
+    }
+  } | null
+  gateway?: {
+    runtime_state?: string | null
+    exit_reason?: string | null
+    session_count?: number | null
+  } | null
+  messagingPlatforms?: Array<{ name?: string; configured?: boolean }> | null
+  routingSummary?: {
+    mode: 'shared_home'
+    profileLabel: string
+    routes: Array<{
+      id: string
+      label: string
+      kind: 'profile' | 'session_source' | 'platform' | 'gateway' | 'automation'
+      status: 'shared' | 'active' | 'configured' | 'inactive'
+      bindingKey?: string
+      profile: string
+      count?: number
+      activeCount?: number
+      detail: string
+    }>
+    bindingTargets: Array<{
+      key: string
+      label: string
+      kind: 'session_source' | 'platform' | 'gateway' | 'automation'
+      status: 'active' | 'configured' | 'inactive'
+      profile: string
+      detail: string
+    }>
+    notes: string[]
+  } | null
+  doctor?: {
+    summary?: {
+      ok: boolean
+      issues_count: number
+      manual_issues_count: number
+      remaining_issues_count: number
+      fixed_count: number
+    } | null
+    issues?: string[]
+    manualIssues?: string[]
+  } | null
+  taskSummary?: {
+    total: number
+    enabled: number
+    paused: number
+    failing: number
+    healthy: number
+    scheduled: number
+  } | null
+  taskHighlights?: Array<{
+    id: string
+    name: string
+    state: string
+    enabled: boolean
+    schedule: string
+    nextRunAt: string | null
+    lastRunAt: string | null
+    lastStatus: string | null
+    lastError: string | null
+  }> | null
+}
+
 export type LogLike = {
   id: string
   timestamp: number
@@ -46,6 +131,7 @@ export interface DashboardData {
   subscription: { type: string; provider?: string; rateLimitTier?: string } | null
   navigateToPanel: (tab: string) => void
   openSession: (session: any) => void
+  refreshHermesStatus: () => void
   // Pre-computed values
   memPct: number | null
   diskPct: number
@@ -80,6 +166,8 @@ export interface DashboardData {
   isClaudeLoading: boolean
   isGithubLoading: boolean
   // Hermes enrichment
+  hermesStatus: HermesDashboardStatus | null
+  hermesStatusUpdatedAt: number | null
   hermesCronJobCount: number
   // Subscription display
   subscriptionLabel: string | null

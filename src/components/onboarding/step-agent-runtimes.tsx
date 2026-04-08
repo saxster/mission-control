@@ -19,6 +19,7 @@ interface RuntimeStatus {
   name: string
   description: string
   installed: boolean
+  cliAvailable?: boolean
   version: string | null
   running: boolean
   authRequired: boolean
@@ -210,6 +211,7 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
             const isInstalling = job?.status === 'running' || job?.status === 'pending'
             const installFailed = job?.status === 'failed'
             const justInstalled = job?.status === 'success'
+            const hermesCliAvailable = rt.id === 'hermes' ? rt.cliAvailable !== false : true
 
             return (
               <div
@@ -235,8 +237,12 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
                 <div className="relative p-4 lg:p-5">
                   {/* Status badge */}
                   {(rt.installed || justInstalled) && !isInstalling && (
-                    <span className="absolute -top-0.5 right-2 text-2xs px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                      Detected
+                    <span className={`absolute -top-0.5 right-2 text-2xs px-1.5 py-0.5 rounded-full border ${
+                      rt.id === 'hermes' && !hermesCliAvailable
+                        ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                        : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    }`}>
+                      {rt.id === 'hermes' && !hermesCliAvailable ? 'State detected' : 'Detected'}
                     </span>
                   )}
 
@@ -275,6 +281,15 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
                         <p className="text-2xs text-muted-foreground/60 mb-1">v{rt.version}</p>
                       )}
 
+                      {rt.id === 'hermes' && !hermesCliAvailable && (
+                        <div className="mb-2 rounded-md border border-blue-500/20 bg-blue-500/5 px-2.5 py-2">
+                          <p className="text-2xs font-medium text-blue-300">Hermes home detected, but the CLI is unavailable</p>
+                          <p className="mt-1 text-2xs text-muted-foreground">
+                            Mission Control can still work with <code>~/.hermes</code>, but bootstrap, doctor, and runnable Hermes commands need a working <code>hermes</code> binary on this station.
+                          </p>
+                        </div>
+                      )}
+
                       {/* Auth status */}
                       {rt.installed && rt.authRequired && (
                         <p className={`text-2xs mb-1 ${rt.authenticated ? 'text-emerald-400/70' : 'text-amber-400'}`}>
@@ -286,6 +301,11 @@ export function StepAgentRuntimes({ isGateway, onNext, onBack }: Props) {
                       {rt.id === 'hermes' && (rt.installed || justInstalled) && !hermesConfigSaved && (
                         <div className="mt-2.5 p-3.5 rounded-lg border border-border/20 bg-black/10 space-y-3">
                           <p className="text-[11px] text-muted-foreground/65 uppercase tracking-wider">Quick Setup</p>
+                          {!hermesCliAvailable && (
+                            <p className="text-[11px] text-blue-300">
+                              Filesystem setup still works here, but terminal-backed Hermes checks will stay unavailable until the CLI is installed.
+                            </p>
+                          )}
 
                           {/* Provider + Model dropdowns */}
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">

@@ -437,12 +437,9 @@ export function getUserFromRequest(request: Request): User | null {
         }
       }
     } else {
-      // No trusted IPs configured — log warning and still allow (backward compat)
-      const proxyUsername = (request.headers.get(proxyAuthHeader) || '').trim()
-      if (proxyUsername) {
-        const user = resolveOrProvisionProxyUser(proxyUsername)
-        if (user) return { ...user, agent_name: agentName }
-      }
+      // No trusted IPs configured — refuse proxy auth to prevent header spoofing.
+      // Previously allowed for backward compat, but this is an auth bypass risk.
+      logger.warn('Proxy auth header configured but MC_PROXY_AUTH_TRUSTED_IPS is empty — ignoring proxy header. Set trusted IPs to enable proxy auth.')
     }
   }
 

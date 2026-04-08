@@ -25,6 +25,48 @@ async function findAvailablePort(host = '127.0.0.1') {
   })
 }
 
+function resolveStandaloneServerPath(repoRoot) {
+  const standaloneDir = path.join(repoRoot, '.next', 'standalone')
+  const directServerPath = path.join(standaloneDir, 'server.js')
+  if (fs.existsSync(directServerPath)) {
+    return directServerPath
+  }
+
+  const nestedServerPath = path.join(
+    standaloneDir,
+    repoRoot.replace(/^[/\\]+/, ''),
+    'server.js',
+  )
+  if (fs.existsSync(nestedServerPath)) {
+    return nestedServerPath
+  }
+
+  return null
+}
+
+function prepareStandaloneAssets(repoRoot, standaloneServerPath) {
+  if (!standaloneServerPath) return
+
+  const standaloneDir = path.dirname(standaloneServerPath)
+  const standaloneNextDir = path.join(standaloneDir, '.next')
+  const standaloneStaticDir = path.join(standaloneNextDir, 'static')
+  const sourceStaticDir = path.join(repoRoot, '.next', 'static')
+  const sourcePublicDir = path.join(repoRoot, 'public')
+  const standalonePublicDir = path.join(standaloneDir, 'public')
+
+  fs.mkdirSync(standaloneNextDir, { recursive: true })
+
+  if (fs.existsSync(sourceStaticDir)) {
+    fs.rmSync(standaloneStaticDir, { recursive: true, force: true })
+    fs.cpSync(sourceStaticDir, standaloneStaticDir, { recursive: true })
+  }
+
+  if (fs.existsSync(sourcePublicDir)) {
+    fs.rmSync(standalonePublicDir, { recursive: true, force: true })
+    fs.cpSync(sourcePublicDir, standalonePublicDir, { recursive: true })
+  }
+}
+
 const modeArg = process.argv.find((arg) => arg.startsWith('--mode='))
 const mode = modeArg ? modeArg.split('=')[1] : 'local'
 if (mode !== 'local' && mode !== 'gateway') {
@@ -34,6 +76,7 @@ if (mode !== 'local' && mode !== 'gateway') {
 
 const repoRoot = process.cwd()
 const fixtureSource = path.join(repoRoot, 'tests', 'fixtures', 'openclaw')
+const hermesFixtureSource = path.join(repoRoot, 'tests', 'fixtures', 'hermes-home')
 const runtimeRoot = path.join(repoRoot, '.tmp', 'e2e-openclaw', mode)
 const dataDir = path.join(runtimeRoot, 'data')
 const mockBinDir = path.join(repoRoot, 'scripts', 'e2e-openclaw', 'bin')
@@ -43,6 +86,9 @@ fs.rmSync(runtimeRoot, { recursive: true, force: true })
 fs.mkdirSync(runtimeRoot, { recursive: true })
 fs.mkdirSync(dataDir, { recursive: true })
 fs.cpSync(fixtureSource, runtimeRoot, { recursive: true })
+if (fs.existsSync(hermesFixtureSource)) {
+  fs.cpSync(hermesFixtureSource, runtimeRoot, { recursive: true })
+}
 
 const gatewayHost = '127.0.0.1'
 const gatewayPort = String(await findAvailablePort(gatewayHost))
@@ -56,6 +102,7 @@ const baseEnv = {
   MC_DISABLE_RATE_LIMIT: '1',
   MISSION_CONTROL_DATA_DIR: dataDir,
   MISSION_CONTROL_DB_PATH: path.join(dataDir, 'mission-control.db'),
+  MISSION_CONTROL_HOME_DIR: runtimeRoot,
   OPENCLAW_STATE_DIR: runtimeRoot,
   OPENCLAW_CONFIG_PATH: path.join(runtimeRoot, 'openclaw.json'),
   OPENCLAW_GATEWAY_HOST: gatewayHost,
@@ -69,6 +116,8 @@ const baseEnv = {
   MC_SKILLS_OPENCLAW_DIR: path.join(skillsRoot, 'openclaw'),
   PATH: `${mockBinDir}:${process.env.PATH || ''}`,
   E2E_GATEWAY_EXPECTED: mode === 'gateway' ? '1' : '0',
+  HOSTNAME: '127.0.0.1',
+  PORT: '3005',
 }
 
 const children = []
@@ -96,15 +145,14 @@ if (mode === 'gateway') {
   children.push(gw)
 }
 
-const standaloneServerPath = path.join(repoRoot, '.next', 'standalone', 'server.js')
-app = fs.existsSync(standaloneServerPath)
+const standaloneServerPath = resolveStandaloneServerPath(repoRoot)
+if (standaloneServerPath) {
+  prepareStandaloneAssets(repoRoot, standaloneServerPath)
+}
+app = standaloneServerPath
   ? spawn('node', [standaloneServerPath], {
-      cwd: repoRoot,
-      env: {
-        ...baseEnv,
-        HOSTNAME: '127.0.0.1',
-        PORT: '3005',
-      },
+      cwd: path.dirname(standaloneServerPath),
+      env: baseEnv,
       stdio: 'inherit',
     })
   : spawn('pnpm', ['start'], {

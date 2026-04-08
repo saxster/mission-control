@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import Database from 'better-sqlite3'
 import { config } from './config'
+import type { HermesRuntimeProfile } from './hermes-runtime-profiles'
 import { logger } from './logger'
 
 const ACTIVE_THRESHOLD_MS = 5 * 60 * 1000 // 5 minutes — hermes sessions are shorter-lived
@@ -27,6 +28,8 @@ export interface HermesSessionStats {
   firstMessageAt: string | null
   lastMessageAt: string | null
   isActive: boolean
+  runtimeProfileName?: string
+  runtimeProfileLabel?: string
 }
 
 interface HermesSessionRow {
@@ -43,17 +46,27 @@ interface HermesSessionRow {
   title: string | null
 }
 
-function getHermesDbPath(): string {
-  return join(config.homeDir, '.hermes', 'state.db')
+function getHermesDbPath(hermesHome = join(config.homeDir, '.hermes')): string {
+  return join(hermesHome, 'state.db')
 }
 
-function getHermesPidPath(): string {
-  return join(config.homeDir, '.hermes', 'gateway.pid')
+function getHermesPidPath(hermesHome = join(config.homeDir, '.hermes')): string {
+  return join(hermesHome, 'gateway.pid')
 }
 
 let hermesBinaryCache: { checkedAt: number; installed: boolean } | null = null
+let hermesPresenceCache: { checkedAt: number; installed: boolean } | null = null
 
-function hasHermesCliBinary(): boolean {
+function getHermesHomeCandidates(): string[] {
+  const dataDir = require('node:path').resolve(config.dataDir || '.data')
+  const homeDir = config.homeDir || process.env.HOME || ''
+  return Array.from(new Set([
+    join(dataDir, '.hermes'),
+    join(homeDir, '.hermes'),
+  ].filter((dir): dir is string => Boolean(dir && dir.trim()))))
+}
+
+export function hasHermesCliBinary(): boolean {
   const now = Date.now()
   if (hermesBinaryCache && now - hermesBinaryCache.checkedAt < 30_000) {
     return hermesBinaryCache.installed
@@ -95,13 +108,38 @@ function hasHermesCliBinary(): boolean {
   return installed
 }
 
+function hasHermesHomeState(): boolean {
+  const now = Date.now()
+  if (hermesPresenceCache && now - hermesPresenceCache.checkedAt < 30_000) {
+    return hermesPresenceCache.installed
+  }
+
+  const markers = [
+    '.env',
+    'state.db',
+    'gateway.pid',
+    'cron/jobs.json',
+    'memories',
+    'sessions',
+    'skills',
+  ]
+  const installed = getHermesHomeCandidates().some((home) =>
+    markers.some((marker) => existsSync(join(home, marker)))
+  )
+
+  hermesPresenceCache = { checkedAt: now, installed }
+  return installed
+}
+
 export function clearHermesDetectionCache(): void {
   hermesBinaryCache = null
+  hermesPresenceCache = null
 }
 
 export function isHermesInstalled(): boolean {
-  // Strict detection: show Hermes UI only when Hermes CLI is actually installed on this system.
-  return hasHermesCliBinary()
+  // Hermes can be meaningfully present either via an executable CLI or an existing ~/.hermes home
+  // with persisted state (cron jobs, memory, env, session DB, etc).
+  return hasHermesCliBinary() || hasHermesHomeState()
 }
 
 function parseGatewayPid(raw: string): number | null {
@@ -129,8 +167,8 @@ function parseGatewayPid(raw: string): number | null {
   }
 }
 
-export function isHermesGatewayRunning(): boolean {
-  const pidPath = getHermesPidPath()
+export function isHermesGatewayRunning(hermesHome?: string): boolean {
+  const pidPath = getHermesPidPath(hermesHome)
   if (!existsSync(pidPath)) return false
 
   try {
@@ -151,8 +189,13 @@ function epochSecondsToISO(epoch: number | null): string | null {
   return new Date(epoch * 1000).toISOString()
 }
 
-export function scanHermesSessions(limit = DEFAULT_SESSION_LIMIT): HermesSessionStats[] {
-  const dbPath = getHermesDbPath()
+function scanHermesSessionsForHome(
+  hermesHome: string,
+  runtimeProfileName: string,
+  runtimeProfileLabel: string,
+  limit = DEFAULT_SESSION_LIMIT,
+): HermesSessionStats[] {
+  const dbPath = getHermesDbPath(hermesHome)
   if (!existsSync(dbPath)) return []
 
   let db: Database.Database | null = null
@@ -174,7 +217,7 @@ export function scanHermesSessions(limit = DEFAULT_SESSION_LIMIT): HermesSession
     `).all(limit) as HermesSessionRow[]
 
     const now = Date.now()
-    const gatewayRunning = isHermesGatewayRunning()
+    const gatewayRunning = isHermesGatewayRunning(hermesHome)
 
     return rows.map((row) => {
       const firstMessageAt = epochSecondsToISO(row.started_at)
@@ -214,6 +257,8 @@ export function scanHermesSessions(limit = DEFAULT_SESSION_LIMIT): HermesSession
         firstMessageAt,
         lastMessageAt,
         isActive,
+        runtimeProfileName,
+        runtimeProfileLabel,
       }
     })
   } catch (err) {
@@ -222,4 +267,35 @@ export function scanHermesSessions(limit = DEFAULT_SESSION_LIMIT): HermesSession
   } finally {
     try { db?.close() } catch { /* ignore */ }
   }
+}
+
+export function scanHermesSessions(
+  limit = DEFAULT_SESSION_LIMIT,
+  runtimeProfiles?: HermesRuntimeProfile[],
+): HermesSessionStats[] {
+  const profiles = runtimeProfiles?.length
+    ? runtimeProfiles
+    : [{
+        name: 'default',
+        label: 'default',
+        description: '',
+        hermesHome: join(config.homeDir, '.hermes'),
+        envPath: join(config.homeDir, '.hermes', '.env'),
+        isDefault: true,
+        exists: true,
+      }]
+
+  return profiles
+    .flatMap((profile) => scanHermesSessionsForHome(
+      profile.hermesHome,
+      profile.name,
+      profile.label,
+      limit,
+    ))
+    .sort((a, b) => {
+      const aLast = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0
+      const bLast = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0
+      return bLast - aLast
+    })
+    .slice(0, limit)
 }

@@ -93,7 +93,7 @@ export const config = {
   soulTemplatesDir:
     process.env.OPENCLAW_SOUL_TEMPLATES_DIR ||
     (openclawStateDir ? path.join(openclawStateDir, 'templates', 'souls') : ''),
-  homeDir: os.homedir(),
+  homeDir: process.env.MISSION_CONTROL_HOME_DIR || os.homedir(),
   gnap: {
     enabled: process.env.GNAP_ENABLED === 'true',
     repoPath: resolvedGnapRepoPath,

@@ -35,6 +35,16 @@ const settingDefinitions: Record<string, { category: string; description: string
     description: 'Optional coordinator routing target (agent name or openclawId). When set, coordinator inbox messages are forwarded to this agent before default/main-session fallback.',
     default: '',
   },
+  'chat.hermes_source_bindings': {
+    category: 'chat',
+    description: 'JSON map of Hermes routing sources (for example cli, telegram, cron, gateway) to planned Mission Control persona bindings.',
+    default: '{}',
+  },
+  'chat.hermes_runtime_profile_bindings': {
+    category: 'chat',
+    description: 'JSON map of Mission Control Hermes personas (primary, personal, work, automation, research) to real Hermes runtime profiles.',
+    default: '{}',
+  },
 
   // General
   'general.site_name': { category: 'general', description: 'Mission Control display name', default: 'Mission Control' },

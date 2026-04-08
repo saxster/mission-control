@@ -11,6 +11,12 @@ pnpm dev --hostname 127.0.0.1 --port 3005
 # Run all tests
 pnpm test:e2e
 
+# Run the focused Hermes vitest bundle
+pnpm test:hermes
+
+# Run the paired Hermes verification path (unit bundle + operator-path browser regression)
+pnpm test:hermes:full
+
 # Run offline OpenClaw harness (no OpenClaw install required)
 pnpm test:e2e:openclaw
 
@@ -58,6 +64,10 @@ Profiles:
 - `notifications.spec.ts` — Notification delivery and read tracking
 - `quality-review.spec.ts` — Quality reviews with batch lookup
 - `search-and-export.spec.ts` — Global search, data export, activity feed
+
+### Hermes Focused Unit Bundle
+- `pnpm test:hermes` — Hermes bootstrap, routing, tasks, event ingestion, session continuation, and client-side route-binding sync
+- `pnpm test:hermes:full` — The Hermes unit bundle plus the `tests/hermes-operator-path.spec.ts` browser regression
 
 ### Infrastructure
 - `limit-caps.spec.ts` — Endpoint limit caps enforced

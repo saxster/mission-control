@@ -8,7 +8,7 @@ import { SignalPill, getLocalOsStatus, getProviderHealth, getMcHealth } from './
 import { OnboardingChecklistWidget } from './widgets/onboarding-checklist-widget'
 import { EmptyStateLaunchpad } from './empty-state-launchpad'
 import { WidgetGrid } from './widget-grid'
-import type { DbStats, ClaudeStats, LogLike, DashboardData } from './widget-primitives'
+import type { DbStats, ClaudeStats, HermesDashboardStatus, LogLike, DashboardData } from './widget-primitives'
 
 export function Dashboard() {
   const {
@@ -43,6 +43,8 @@ export function Dashboard() {
   const [dbStats, setDbStats] = useState<DbStats | null>(null)
   const [claudeStats, setClaudeStats] = useState<ClaudeStats | null>(null)
   const [githubStats, setGithubStats] = useState<any>(null)
+  const [hermesStatus, setHermesStatus] = useState<HermesDashboardStatus | null>(null)
+  const [hermesStatusUpdatedAt, setHermesStatusUpdatedAt] = useState<number | null>(null)
   const [hermesCronJobCount, setHermesCronJobCount] = useState(0)
   const [loading, setLoading] = useState({
     system: true,
@@ -50,6 +52,19 @@ export function Dashboard() {
     claude: true,
     github: true,
   })
+
+  const refreshHermesStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/hermes?refresh=tasks')
+      if (!res.ok) return
+      const data = await res.json()
+      setHermesStatus(data)
+      setHermesStatusUpdatedAt(Date.now())
+      if (data?.cronJobCount != null) setHermesCronJobCount(data.cronJobCount)
+    } catch {
+      // non-critical
+    }
+  }, [])
 
   const loadDashboard = useCallback(async () => {
     const requests: Promise<void>[] = []
@@ -79,6 +94,10 @@ export function Dashboard() {
         .finally(() => setLoading(prev => ({ ...prev, sessions: false })))
     )
 
+    requests.push(
+      refreshHermesStatus()
+    )
+
     if (isLocal) {
       requests.push(
         fetch('/api/claude/sessions')
@@ -102,21 +121,12 @@ export function Dashboard() {
           .finally(() => setLoading(prev => ({ ...prev, github: false })))
       )
 
-      requests.push(
-        fetch('/api/hermes')
-          .then(async (res) => {
-            if (!res.ok) return
-            const data = await res.json()
-            if (data?.cronJobCount != null) setHermesCronJobCount(data.cronJobCount)
-          })
-          .catch(() => {})
-      )
     } else {
       setLoading(prev => ({ ...prev, claude: false, github: false }))
     }
 
     await Promise.allSettled(requests)
-  }, [isLocal, setSessions])
+  }, [isLocal, refreshHermesStatus, setSessions])
 
   useSmartPoll(loadDashboard, isLocal ? 15000 : 60000, { pauseWhenConnected: true })
 
@@ -226,6 +236,7 @@ export function Dashboard() {
     subscription,
     navigateToPanel,
     openSession,
+    refreshHermesStatus,
     memPct,
     diskPct,
     systemLoad,
@@ -256,6 +267,8 @@ export function Dashboard() {
     isSessionsLoading,
     isClaudeLoading,
     isGithubLoading,
+    hermesStatus,
+    hermesStatusUpdatedAt,
     hermesCronJobCount,
     subscriptionLabel,
     subscriptionPrice,

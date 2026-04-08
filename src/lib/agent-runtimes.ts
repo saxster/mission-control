@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { config } from './config'
 import { runCommand, runOpenClaw } from './command'
-import { isHermesInstalled, isHermesGatewayRunning, clearHermesDetectionCache } from './hermes-sessions'
+import { isHermesInstalled, isHermesGatewayRunning, clearHermesDetectionCache, hasHermesCliBinary } from './hermes-sessions'
 import { logger } from './logger'
 
 export type RuntimeId = 'openclaw' | 'hermes' | 'claude' | 'codex'
@@ -13,6 +13,7 @@ export interface RuntimeStatus {
   name: string
   description: string
   installed: boolean
+  cliAvailable?: boolean
   version: string | null
   running: boolean
   authRequired: boolean
@@ -136,9 +137,10 @@ function detectOpenClaw(): RuntimeStatus {
 function detectHermes(): RuntimeStatus {
   const meta = RUNTIME_META.hermes
   const installed = isHermesInstalled()
+  const cliAvailable = hasHermesCliBinary()
   let version: string | null = null
 
-  if (installed) {
+  if (cliAvailable) {
     try {
       const path = require('node:path')
       const dataDir = path.resolve(config.dataDir || '.data')
@@ -167,7 +169,7 @@ function detectHermes(): RuntimeStatus {
   }
 
   const running = installed && isHermesGatewayRunning()
-  return { id: 'hermes', ...meta, installed, version, running, authenticated: true }
+  return { id: 'hermes', ...meta, installed, cliAvailable, version, running, authenticated: true }
 }
 
 function detectBinary(bins: string[], versionFlag = '--version'): { installed: boolean; version: string | null } {
@@ -440,7 +442,7 @@ async function installHermesLocal(job: InstallJob): Promise<void> {
     // Verify install actually worked — check for the binary
     clearHermesDetectionCache()
     logger.info({ dataDir: config.dataDir, homeDir: require('node:os').homedir() }, 'Verifying hermes install...')
-    const verified = isHermesInstalled()
+    const verified = hasHermesCliBinary()
     logger.info({ verified }, 'Hermes install verification result')
 
     if (result.code === 0 && verified) {
