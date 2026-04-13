@@ -48,7 +48,7 @@ Screenshots should be updated when:
    |-----------|-----|-------|
    | `mission-control-overview.png` | `/` | Main dashboard, full page |
    | `mission-control-agents.png` | `/agents` | Agents panel open |
-   | `mission-control-memory-graph.png` | `/memory` | Memory graph with nodes |
+   | `mission-control-memory-graph.png` | `/knowledge-base` | Knowledge Base graph with nodes |
 
 4. **Crop and optimise** to reduce file size:
 

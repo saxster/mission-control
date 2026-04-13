@@ -75,8 +75,8 @@ Browse, install, and manage agent skills from local directories and external reg
 - **Task bridge** — read-only integration surfaces Claude Code team tasks and configs
 - **Direct CLI** — connect Claude Code, Codex, or any CLI directly without a gateway
 
-### 10. Memory Knowledge Graph
-Visual knowledge graph for agent memory in gateway mode. Interactive node-edge visualization of agent memory relationships.
+### 10. Knowledge Base Graph
+Visual knowledge graph for the Hermes wiki and linked knowledge in gateway mode. The shipped product now exposes this through the Knowledge Base rather than a standalone Memory Browser.
 
 ### 11. Agent Messaging (Comms)
 Session-threaded inter-agent communication via comms API (`a2a:*`, `coord:*`, `session:*`). Coordinator inbox support with runtime tool-call visibility.
