@@ -17,8 +17,8 @@ pnpm test:hermes
 # Run the paired Hermes verification path (unit bundle + operator-path browser regression)
 pnpm test:hermes:full
 
-# Run offline OpenClaw harness (no OpenClaw install required)
-pnpm test:e2e:openclaw
+# Run the Mission Control fixture harness (no live gateway install required)
+pnpm test:e2e:harness
 
 # Run a specific spec
 pnpm exec playwright test tests/tasks-crud.spec.ts
@@ -30,16 +30,17 @@ Tests require `.env.local` with:
 - `API_KEY=test-api-key-e2e-12345`
 - `MC_DISABLE_RATE_LIMIT=1` (bypasses mutation/read rate limits, keeps login rate limit active)
 
-## OpenClaw Offline Harness
+## Mission Control Fixture Harness
 
-The harness runs Mission Control against fixture data and mock binaries/gateway:
-- fixtures: `tests/fixtures/openclaw/`
-- mock CLI: `scripts/e2e-openclaw/bin/{openclaw,clawdbot}`
-- mock gateway: `scripts/e2e-openclaw/mock-gateway.mjs`
+The harness runs Mission Control against fixture data and mock binaries/gateway.
+The mocked runtime still uses `openclaw.json` and `OPENCLAW_*` compatibility env vars because those are current runtime contracts.
+- fixtures: `tests/fixtures/runtime-home/`
+- mock CLI: `scripts/e2e-harness/bin/{openclaw,clawdbot}`
+- mock gateway: `scripts/e2e-harness/mock-gateway.mjs`
 
 Profiles:
-- `pnpm test:e2e:openclaw:local` - local mode (gateway not running)
-- `pnpm test:e2e:openclaw:gateway` - gateway mode (mock gateway running)
+- `pnpm test:e2e:harness:local` - local mode (gateway not running)
+- `pnpm test:e2e:harness:gateway` - gateway mode (mock gateway running)
 
 ## Spec Files
 

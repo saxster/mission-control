@@ -6,7 +6,12 @@ const nextConfig = {
   output: 'standalone',
   outputFileTracingRoot: projectRoot,
   outputFileTracingExcludes: {
-    '/*': ['./.data/**/*'],
+    '/*': [
+      './.data/**/*',
+      './test-results/**/*',
+      './playwright-report/**/*',
+      './.playwright-mcp/**/*',
+    ],
   },
   turbopack: {
     root: projectRoot,

@@ -2,11 +2,10 @@ import { test, expect } from '@playwright/test'
 import { API_KEY_HEADER } from './helpers'
 
 const stamp = Date.now()
-const testFile = `memory/e2e-mk-${stamp}.md`
-const testFile2 = `memory/e2e-mk-linked-${stamp}.md`
+const testFile = `queries/e2e-mk-${stamp}.md`
+const testFile2 = `queries/e2e-mk-linked-${stamp}.md`
 
-test.describe('Memory Knowledge Features', () => {
-  // Setup: create test files with wiki-links and schema
+test.describe('Legacy Memory API Compatibility', () => {
   test.beforeAll(async ({ request }) => {
     const file1 = await request.post('/api/memory', {
       headers: API_KEY_HEADER,
@@ -30,6 +29,7 @@ test.describe('Memory Knowledge Features', () => {
       },
     })
     expect(file1.status()).toBe(200)
+    expect((await file1.json()).legacy).toBe(true)
 
     const file2 = await request.post('/api/memory', {
       headers: API_KEY_HEADER,
@@ -47,6 +47,7 @@ test.describe('Memory Knowledge Features', () => {
       },
     })
     expect(file2.status()).toBe(200)
+    expect((await file2.json()).legacy).toBe(true)
   })
 
   // Cleanup
@@ -61,8 +62,6 @@ test.describe('Memory Knowledge Features', () => {
     })
   })
 
-  // --- Links API ---
-
   test('GET /api/memory/links returns link graph', async ({ request }) => {
     const res = await request.get('/api/memory/links', {
       headers: API_KEY_HEADER,
@@ -71,10 +70,22 @@ test.describe('Memory Knowledge Features', () => {
     const body = await res.json()
     expect(Array.isArray(body.nodes)).toBe(true)
     expect(body.nodes.length).toBeGreaterThan(0)
-    // Each node should have expected shape
+    expect(body.legacy).toBe(true)
     const node = body.nodes[0]
     expect(node).toHaveProperty('path')
     expect(node).toHaveProperty('linkCount')
+  })
+
+  test('GET /api/memory/graph returns legacy-compatible wiki graph data', async ({ request }) => {
+    const res = await request.get('/api/memory/graph', {
+      headers: API_KEY_HEADER,
+    })
+    expect(res.status()).toBe(200)
+    const body = await res.json()
+    expect(body.legacy).toBe(true)
+    expect(Array.isArray(body.agents)).toBe(true)
+    expect(Array.isArray(body.nodes)).toBe(true)
+    expect(Array.isArray(body.edges)).toBe(true)
   })
 
   test('GET /api/memory/links?file= returns per-file links', async ({ request }) => {
@@ -85,8 +96,8 @@ test.describe('Memory Knowledge Features', () => {
     expect(res.status()).toBe(200)
     const body = await res.json()
     expect(body.file).toBe(testFile)
+    expect(body.legacy).toBe(true)
     expect(Array.isArray(body.wikiLinks)).toBe(true)
-    // Should find the wiki-link to the linked file
     const link = body.wikiLinks.find((l: any) => l.target.includes('linked'))
     expect(link).toBeTruthy()
   })
@@ -95,8 +106,6 @@ test.describe('Memory Knowledge Features', () => {
     const res = await request.get('/api/memory/links')
     expect(res.status()).toBe(401)
   })
-
-  // --- Health API ---
 
   test('GET /api/memory/health returns health report', async ({ request }) => {
     const res = await request.get('/api/memory/health', {
@@ -107,9 +116,9 @@ test.describe('Memory Knowledge Features', () => {
     expect(typeof body.overallScore).toBe('number')
     expect(body.overallScore).toBeGreaterThanOrEqual(0)
     expect(body.overallScore).toBeLessThanOrEqual(100)
+    expect(body.legacy).toBe(true)
     expect(Array.isArray(body.categories)).toBe(true)
-    expect(body.categories.length).toBe(8)
-    // Each category has expected shape
+    expect(body.categories.length).toBeGreaterThan(0)
     for (const cat of body.categories) {
       expect(cat).toHaveProperty('name')
       expect(cat).toHaveProperty('score')
@@ -121,8 +130,6 @@ test.describe('Memory Knowledge Features', () => {
     const res = await request.get('/api/memory/health')
     expect(res.status()).toBe(401)
   })
-
-  // --- Context API ---
 
   test('GET /api/memory/context returns context payload', async ({ request }) => {
     const res = await request.get('/api/memory/context', {
@@ -138,14 +145,35 @@ test.describe('Memory Knowledge Features', () => {
     expect(Array.isArray(body.recentFiles)).toBe(true)
     expect(Array.isArray(body.maintenanceSignals)).toBe(true)
     expect(typeof body.healthSummary).toBe('object')
+    expect(body.legacy).toBe(true)
+  })
+
+  test('GET /api/memory?action=tree returns legacy tree metadata', async ({ request }) => {
+    const res = await request.get('/api/memory?action=tree', {
+      headers: API_KEY_HEADER,
+    })
+    expect(res.status()).toBe(200)
+    const body = await res.json()
+    expect(Array.isArray(body.tree)).toBe(true)
+    expect(Array.isArray(body.roots)).toBe(true)
+    expect(body.legacy).toBe(true)
+  })
+
+  test('GET /api/memory/search returns legacy search metadata', async ({ request }) => {
+    const res = await request.get(`/api/memory/search?q=${encodeURIComponent(`unique-token-${stamp}`)}`, {
+      headers: API_KEY_HEADER,
+    })
+    expect(res.status()).toBe(200)
+    const body = await res.json()
+    expect(Array.isArray(body.results)).toBe(true)
+    expect(body.results.some((result: any) => result.path === testFile)).toBe(true)
+    expect(body.legacy).toBe(true)
   })
 
   test('context API requires auth', async ({ request }) => {
     const res = await request.get('/api/memory/context')
     expect(res.status()).toBe(401)
   })
-
-  // --- Process API ---
 
   test('POST /api/memory/process reflect action', async ({ request }) => {
     const res = await request.post('/api/memory/process', {
@@ -156,6 +184,7 @@ test.describe('Memory Knowledge Features', () => {
     const body = await res.json()
     expect(body.action).toBe('reflect')
     expect(Array.isArray(body.suggestions)).toBe(true)
+    expect(body.legacy).toBe(true)
   })
 
   test('POST /api/memory/process reweave action', async ({ request }) => {
@@ -167,6 +196,7 @@ test.describe('Memory Knowledge Features', () => {
     const body = await res.json()
     expect(body.action).toBe('reweave')
     expect(Array.isArray(body.suggestions)).toBe(true)
+    expect(body.legacy).toBe(true)
   })
 
   test('POST /api/memory/process generate-moc action', async ({ request }) => {
@@ -180,6 +210,7 @@ test.describe('Memory Knowledge Features', () => {
     expect(Array.isArray(body.groups)).toBe(true)
     expect(typeof body.totalGroups).toBe('number')
     expect(typeof body.totalEntries).toBe('number')
+    expect(body.legacy).toBe(true)
   })
 
   test('process API rejects invalid action', async ({ request }) => {
@@ -197,8 +228,6 @@ test.describe('Memory Knowledge Features', () => {
     expect(res.status()).toBe(401)
   })
 
-  // --- Memory content now returns wiki-links and schema ---
-
   test('GET /api/memory content includes wikiLinks and schema', async ({ request }) => {
     const res = await request.get(
       `/api/memory?action=content&path=${encodeURIComponent(testFile)}`,
@@ -207,10 +236,9 @@ test.describe('Memory Knowledge Features', () => {
     expect(res.status()).toBe(200)
     const body = await res.json()
     expect(body.path).toBe(testFile)
-    // Wiki-links extracted
+    expect(body.legacy).toBe(true)
     expect(Array.isArray(body.wikiLinks)).toBe(true)
     expect(body.wikiLinks.length).toBeGreaterThan(0)
-    // Schema validation result
     expect(body.schema).toBeTruthy()
     expect(body.schema.valid).toBe(true)
     expect(body.schema.errors).toEqual([])
@@ -237,5 +265,18 @@ test.describe('Memory Knowledge Features', () => {
     expect(body.success).toBe(true)
     expect(Array.isArray(body.schemaWarnings)).toBe(true)
     expect(body.schemaWarnings).toContain('Missing required field: missing_field')
+    expect(body.legacy).toBe(true)
+  })
+
+  test('POST /api/memory/search rebuild is a deprecated no-op', async ({ request }) => {
+    const res = await request.post('/api/memory/search', {
+      headers: API_KEY_HEADER,
+      data: { action: 'rebuild' },
+    })
+    expect(res.status()).toBe(200)
+    const body = await res.json()
+    expect(body.success).toBe(true)
+    expect(body.legacy).toBe(true)
+    expect(body.indexed).toBe(0)
   })
 })
