@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useCallback, useState, useRef } from 'react'
-import { useMissionControl, type Conversation, type ChatAttachment } from '@/store'
+import { type Conversation, type ChatAttachment } from '@/store'
+import { useMissionControlChatWorkspaceState } from '@/store/selectors'
 import { useSmartPoll } from '@/lib/use-smart-poll'
 import { createClientLogger } from '@/lib/client-logger'
 import { ConversationList } from './conversation-list'
@@ -51,7 +52,7 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
     addSplitPane,
     removeSplitPane,
     clearSplitPanes,
-  } = useMissionControl()
+  } = useMissionControlChatWorkspaceState()
   const { updateBinding: updateHermesRouteBinding } = useHermesRouteBindings()
 
   const pendingIdRef = useRef(-1)

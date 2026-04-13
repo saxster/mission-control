@@ -1,16 +1,17 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { useMissionControl } from '@/store'
 import { useNavigateToPanel } from '@/lib/navigation'
 import { useSmartPoll } from '@/lib/use-smart-poll'
+import { measureAsync } from '@/lib/performance-monitor'
+import { useMissionControlDashboardState } from '@/store/selectors'
 import { SignalPill, getLocalOsStatus, getProviderHealth, getMcHealth } from './widget-primitives'
 import { OnboardingChecklistWidget } from './widgets/onboarding-checklist-widget'
 import { EmptyStateLaunchpad } from './empty-state-launchpad'
 import { WidgetGrid } from './widget-grid'
 import type { DbStats, ClaudeStats, HermesDashboardStatus, LogLike, DashboardData } from './widget-primitives'
 
-export function Dashboard() {
+export function Dashboard({ active = true }: { active?: boolean }) {
   const {
     sessions,
     setSessions,
@@ -21,7 +22,7 @@ export function Dashboard() {
     agents,
     tasks,
     setActiveConversation,
-  } = useMissionControl()
+  } = useMissionControlDashboardState()
 
   const navigateToPanel = useNavigateToPanel()
   const isLocal = dashboardMode === 'local'
@@ -84,7 +85,7 @@ export function Dashboard() {
     )
 
     requests.push(
-      fetch('/api/sessions')
+      measureAsync('mc:sessions-fetch', () => fetch('/api/sessions'))
         .then(async (res) => {
           if (!res.ok) return
           const data = await res.json()
@@ -128,7 +129,7 @@ export function Dashboard() {
     await Promise.allSettled(requests)
   }, [isLocal, refreshHermesStatus, setSessions])
 
-  useSmartPoll(loadDashboard, isLocal ? 15000 : 60000, { pauseWhenConnected: true })
+  useSmartPoll(loadDashboard, isLocal ? 15000 : 60000, { pauseWhenConnected: true, enabled: active })
 
   // Computed values
   const isSystemLoading = loading.system && !systemStats

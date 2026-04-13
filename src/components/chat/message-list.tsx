@@ -2,35 +2,12 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { useMissionControl, ChatMessage } from '@/store'
+import {
+  useMissionControlConversationGroups,
+  useMissionControlConversationMessages,
+} from '@/store/selectors'
 import { MessageBubble } from './message-bubble'
 import { Button } from '@/components/ui/button'
-
-function formatDateGroup(timestamp: number): string {
-  const date = new Date(timestamp * 1000)
-  const today = new Date()
-  const yesterday = new Date(today)
-  yesterday.setDate(yesterday.getDate() - 1)
-
-  if (date.toDateString() === today.toDateString()) return 'Today'
-  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'
-  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-}
-
-function groupMessagesByDate(messages: ChatMessage[]): Array<{ date: string; messages: ChatMessage[] }> {
-  const groups: Array<{ date: string; messages: ChatMessage[] }> = []
-  let currentDate = ''
-
-  for (const msg of messages) {
-    const dateStr = formatDateGroup(msg.created_at)
-    if (dateStr !== currentDate) {
-      currentDate = dateStr
-      groups.push({ date: dateStr, messages: [] })
-    }
-    groups[groups.length - 1].messages.push(msg)
-  }
-
-  return groups
-}
 
 // Check if message should be visually grouped with previous
 function isGroupedWithPrevious(messages: ChatMessage[], index: number): boolean {
@@ -47,7 +24,13 @@ function isGroupedWithPrevious(messages: ChatMessage[], index: number): boolean 
 }
 
 export function MessageList() {
-  const { chatMessages, activeConversation, isSendingMessage, updatePendingMessage, removePendingMessage, addChatMessage } = useMissionControl()
+  const activeConversation = useMissionControl((state) => state.activeConversation)
+  const isSendingMessage = useMissionControl((state) => state.isSendingMessage)
+  const updatePendingMessage = useMissionControl((state) => state.updatePendingMessage)
+  const removePendingMessage = useMissionControl((state) => state.removePendingMessage)
+  const addChatMessage = useMissionControl((state) => state.addChatMessage)
+  const conversationMessages = useMissionControlConversationMessages(activeConversation)
+  const groups = useMissionControlConversationGroups(activeConversation)
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [showNewMessages, setShowNewMessages] = useState(false)
@@ -61,7 +44,6 @@ export function MessageList() {
 
   // Auto-scroll to bottom on new messages (only if near bottom)
   useEffect(() => {
-    const conversationMessages = chatMessages.filter(m => m.conversation_id === activeConversation)
     const newCount = conversationMessages.length
 
     if (newCount > prevMessageCountRef.current) {
@@ -72,7 +54,7 @@ export function MessageList() {
       }
     }
     prevMessageCountRef.current = newCount
-  }, [chatMessages, activeConversation, isNearBottom])
+  }, [conversationMessages.length, isNearBottom])
 
   // Scroll to bottom on conversation change
   useEffect(() => {
@@ -143,10 +125,6 @@ export function MessageList() {
     )
   }
 
-  const conversationMessages = chatMessages.filter(
-    m => m.conversation_id === activeConversation
-  )
-
   if (conversationMessages.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -163,8 +141,6 @@ export function MessageList() {
       </div>
     )
   }
-
-  const groups = groupMessagesByDate(conversationMessages)
 
   return (
     <div ref={containerRef} className="relative flex-1 overflow-y-auto px-4 py-3" onScroll={handleScroll}>

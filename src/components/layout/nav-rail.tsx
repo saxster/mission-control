@@ -4,7 +4,9 @@ import Image from 'next/image'
 import { useState, useEffect } from 'react'
 import { useTranslations } from 'next-intl'
 import { useMissionControl } from '@/store'
+import { useMissionControlNavState } from '@/store/selectors'
 import { useNavigateToPanel, usePrefetchPanel } from '@/lib/navigation'
+import { isMissionControlHarnessTestMode } from '@/lib/mission-control-harness'
 import { Button } from '@/components/ui/button'
 import { APP_VERSION } from '@/lib/version'
 import { getPluginNavItems } from '@/lib/plugins'
@@ -34,7 +36,8 @@ const navGroups: NavGroup[] = [
       { id: 'chat', label: 'Chat', icon: <ChatIcon />, priority: false, essential: true },
       { id: 'channels', label: 'Channels', icon: <ChannelsIcon />, priority: false },
       { id: 'skills', label: 'Skills', icon: <SkillsIcon />, priority: false },
-      { id: 'memory', label: 'Memory', icon: <MemoryIcon />, priority: false },
+      { id: 'knowledge-base', label: 'Knowledge Base', icon: <MemoryIcon />, priority: false },
+      { id: 'obsidian', label: 'Obsidian', icon: <IntegrationsIcon />, priority: false },
     ],
   },
   {
@@ -89,7 +92,7 @@ const navItemTranslationKeys: Record<string, string> = {
   chat: 'chat',
   channels: 'channels',
   skills: 'skills',
-  memory: 'memory',
+  'knowledge-base': 'knowledgeBase',
   activity: 'activity',
   logs: 'logs',
   'cost-tracker': 'costTracker',
@@ -125,7 +128,7 @@ const gatewayOnlyPanels = new Set([
 const adminOnlyPanels = new Set<string>([])
 
 export function NavRail() {
-  const { activeTab, connection, dashboardMode, currentUser, activeTenant, tenants, osUsers, setActiveTenant, fetchTenants, fetchOsUsers, activeProject, projects, setActiveProject, fetchProjects, sidebarExpanded, collapsedGroups, toggleSidebar, toggleGroup, defaultOrgName, interfaceMode, setInterfaceMode } = useMissionControl()
+  const { activeTab, connection, dashboardMode, currentUser, activeTenant, tenants, osUsers, setActiveTenant, fetchTenants, fetchOsUsers, activeProject, projects, setActiveProject, fetchProjects, sidebarExpanded, collapsedGroups, toggleSidebar, toggleGroup, defaultOrgName, interfaceMode, setInterfaceMode } = useMissionControlNavState()
   const navigateToPanel = useNavigateToPanel()
   const prefetchPanel = usePrefetchPanel()
   const tn = useTranslations('nav')
@@ -142,6 +145,7 @@ export function NavRail() {
   }
   const isLocal = dashboardMode === 'local'
   const isAdmin = currentUser?.role === 'admin'
+  const isHarnessTestMode = isMissionControlHarnessTestMode()
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set())
 
   function toggleParent(id: string) {
@@ -236,6 +240,7 @@ export function NavRail() {
       <nav
         role="navigation"
         aria-label="Main navigation"
+        data-mc-nav={isHarnessTestMode ? 'ready' : undefined}
         className={`hidden md:flex flex-col bg-gradient-to-b from-card to-background border-r border-border shrink-0 transition-all duration-200 ease-in-out ${
           sidebarExpanded ? 'w-[220px]' : 'w-14'
         }`}
@@ -500,6 +505,7 @@ function NavButton({ item, active, expanded, onClick, onPrefetch, nested }: {
         onClick={onClick}
         onMouseEnter={onPrefetch}
         onFocus={onPrefetch}
+        data-panel-id={item.id}
         aria-current={active ? 'page' : undefined}
         className={`w-full flex items-center gap-2 px-2 h-auto rounded-lg text-left justify-start relative ${
           nested ? 'py-1' : 'py-1.5'
@@ -525,6 +531,7 @@ function NavButton({ item, active, expanded, onClick, onPrefetch, nested }: {
       onClick={onClick}
       onMouseEnter={onPrefetch}
       onFocus={onPrefetch}
+      data-panel-id={item.id}
       title={item.label}
       aria-current={active ? 'page' : undefined}
       className={`rounded-lg group relative ${
