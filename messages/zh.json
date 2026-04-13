@@ -79,6 +79,7 @@
     "channels": "频道",
     "skills": "技能",
     "memory": "记忆",
+    "knowledgeBase": "知识库",
     "activity": "活动",
     "logs": "日志",
     "costTracker": "费用追踪",
@@ -149,6 +150,7 @@
     "loadingActiveSessions": "正在加载活跃会话",
     "hydratingWorkspaceBoard": "正在初始化工作区面板",
     "mappingMemoryGraph": "正在映射记忆图谱",
+    "mappingKnowledgeBaseGraph": "正在映射知识图谱",
     "indexingSkillCatalog": "正在索引技能目录"
   },
   "header": {
@@ -185,7 +187,7 @@
     "goToNotifications": "前往通知",
     "goToTokenUsage": "前往令牌用量",
     "goToLogs": "前往日志",
-    "goToMemoryBrowser": "前往记忆浏览器",
+    "goToKnowledgeBase": "前往知识库",
     "goToIntegrations": "前往集成",
     "goToSettings": "前往设置",
     "goToGateways": "前往网关",
