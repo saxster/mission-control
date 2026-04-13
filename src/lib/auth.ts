@@ -3,6 +3,7 @@ import { getDatabase } from './db'
 import { hashPassword, verifyPassword, verifyPasswordWithRehashCheck } from './password'
 import { logSecurityEvent } from './security-events'
 import { parseMcSessionCookieHeader } from './session-cookie'
+import { logger } from './logger'
 
 // Trusted IPs for proxy auth header (comma-separated)
 const PROXY_AUTH_TRUSTED_IPS = new Set(
@@ -626,4 +627,3 @@ export function requireRole(
   }
   return { user }
 }
-

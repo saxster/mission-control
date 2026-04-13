@@ -345,7 +345,7 @@ interface MissionControlStore {
   setCronJobs: (jobs: CronJob[]) => void
   updateCronJob: (name: string, updates: Partial<CronJob>) => void
 
-  // Memory Browser
+  // Legacy filesystem knowledge state
   memoryFiles: MemoryFile[]
   selectedMemoryFile: string | null
   memoryContent: string | null
@@ -472,7 +472,7 @@ export const useMissionControl = create<MissionControlStore>()(
         ),
       })),
 
-    // Memory Browser
+    // Legacy filesystem knowledge state
     memoryFiles: [],
     selectedMemoryFile: null,
     memoryContent: null,
