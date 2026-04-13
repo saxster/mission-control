@@ -2,77 +2,87 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
 import { readLimiter, mutationLimiter } from '@/lib/rate-limit'
 import { logger } from '@/lib/logger'
-import { MEMORY_PATH, MEMORY_ALLOWED_PREFIXES } from '@/lib/memory-path'
-import { searchMemory, rebuildIndex } from '@/lib/memory-search'
-import { getDatabase } from '@/lib/db'
+import { getKnowledgeBaseContext, searchKnowledgeBase } from '@/lib/knowledge-base'
+import {
+  decorateLegacyMemoryResponse,
+  legacyMemoryJson,
+  logLegacyMemoryRouteHit,
+} from '@/lib/legacy-memory-route'
 
-/**
- * GET /api/memory/search?q=query&limit=20
- *
- * FTS5-powered full-text search across memory files.
- * Returns BM25-ranked results with highlighted snippets.
- * Supports FTS5 query syntax: AND, OR, NOT, NEAR, "exact phrase", prefix*
- */
+const LEGACY_ROUTE = { canonicalPath: '/api/knowledge-base/search' } as const
+
 export async function GET(request: NextRequest) {
   const auth = requireRole(request, 'viewer')
-  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  if ('error' in auth) return legacyMemoryJson({ error: auth.error }, LEGACY_ROUTE, { status: auth.status })
 
   const limited = readLimiter(request)
-  if (limited) return limited
+  if (limited) return decorateLegacyMemoryResponse(limited, LEGACY_ROUTE)
 
-  if (!MEMORY_PATH) {
-    return NextResponse.json({ error: 'Memory directory not configured' }, { status: 500 })
-  }
-
-  const { searchParams } = new URL(request.url)
-  const query = searchParams.get('q') || searchParams.get('query')
-  const limitParam = Number(searchParams.get('limit') || '20')
+  const runtimeProfileName = request.nextUrl.searchParams.get('runtimeProfileName')
+  const query = request.nextUrl.searchParams.get('q') || request.nextUrl.searchParams.get('query')
+  const limitParam = Number(request.nextUrl.searchParams.get('limit') || '20')
   const limit = Math.min(Math.max(1, limitParam), 100)
 
+  logLegacyMemoryRouteHit({
+    request,
+    user: auth.user,
+    runtimeProfileName,
+    action: 'search',
+    ...LEGACY_ROUTE,
+  })
+
   if (!query) {
-    return NextResponse.json({ error: 'Query parameter "q" is required' }, { status: 400 })
+    return legacyMemoryJson({ error: 'Query parameter "q" is required' }, LEGACY_ROUTE, { status: 400 })
   }
 
   try {
-    const response = await searchMemory(MEMORY_PATH, MEMORY_ALLOWED_PREFIXES, query, { limit })
-    return NextResponse.json(response)
+    const context = getKnowledgeBaseContext(runtimeProfileName)
+    const results = await searchKnowledgeBase(context, query, limit)
+    return legacyMemoryJson({
+      query,
+      results,
+      count: results.length,
+      initialized: context.wikiExists,
+      emptyStateMessage: context.firstRunReason,
+      runtimeProfileName: context.runtimeProfile.name,
+    }, LEGACY_ROUTE)
   } catch (err) {
-    logger.error({ err }, 'Memory search API error')
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    logger.error({ err }, 'Legacy memory search API error')
+    return legacyMemoryJson({ error: 'Internal server error' }, LEGACY_ROUTE, { status: 500 })
   }
 }
 
-/**
- * POST /api/memory/search { action: "rebuild" }
- *
- * Rebuild the FTS5 index from all memory files.
- */
 export async function POST(request: NextRequest) {
   const auth = requireRole(request, 'operator')
-  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  if ('error' in auth) return legacyMemoryJson({ error: auth.error }, LEGACY_ROUTE, { status: auth.status })
 
   const rateCheck = mutationLimiter(request)
-  if (rateCheck) return rateCheck
-
-  if (!MEMORY_PATH) {
-    return NextResponse.json({ error: 'Memory directory not configured' }, { status: 500 })
-  }
+  if (rateCheck) return decorateLegacyMemoryResponse(rateCheck, LEGACY_ROUTE)
 
   try {
     const body = await request.json()
+    const runtimeProfileName = typeof body?.runtimeProfileName === 'string' ? body.runtimeProfileName : null
+
+    logLegacyMemoryRouteHit({
+      request,
+      user: auth.user,
+      runtimeProfileName,
+      action: typeof body?.action === 'string' ? body.action : 'unknown',
+      ...LEGACY_ROUTE,
+    })
 
     if (body.action === 'rebuild') {
-      const result = await rebuildIndex(MEMORY_PATH, MEMORY_ALLOWED_PREFIXES)
-      return NextResponse.json({
+      return legacyMemoryJson({
         success: true,
-        message: `Rebuilt FTS index: ${result.indexed} files in ${result.duration}ms`,
-        ...result,
-      })
+        message: 'Knowledge Base search no longer requires a manual rebuild; this compatibility action is now a no-op.',
+        indexed: 0,
+        duration: 0,
+      }, LEGACY_ROUTE)
     }
 
-    return NextResponse.json({ error: 'Invalid action. Use: rebuild' }, { status: 400 })
+    return legacyMemoryJson({ error: 'Invalid action. Use: rebuild' }, LEGACY_ROUTE, { status: 400 })
   } catch (err) {
-    logger.error({ err }, 'Memory search POST API error')
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    logger.error({ err }, 'Legacy memory search POST API error')
+    return legacyMemoryJson({ error: 'Internal server error' }, LEGACY_ROUTE, { status: 500 })
   }
 }

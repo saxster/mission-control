@@ -98,7 +98,23 @@ const endpoints: Endpoint[] = [
   { path: '/api/spawn', methods: ['POST'], description: 'Spawn agent subprocess', tag: 'Spawn', auth: 'operator' },
 
   // ── Memory ────────────────────────────────────────
-  { path: '/api/memory', methods: ['GET', 'POST', 'PUT', 'DELETE'], description: 'Memory browser — list, read, write, delete', tag: 'Memory', auth: 'viewer/operator' },
+  { path: '/api/memory', methods: ['GET', 'POST', 'PUT', 'DELETE'], description: 'Deprecated compatibility shim for legacy Memory Browser callers', tag: 'Memory', auth: 'viewer/operator' },
+  { path: '/api/knowledge-base/tree', methods: ['GET'], description: 'Knowledge Base wiki tree', tag: 'Knowledge Base', auth: 'viewer' },
+  { path: '/api/knowledge-base/content', methods: ['GET', 'POST', 'DELETE'], description: 'Knowledge Base wiki + mirrored content', tag: 'Knowledge Base', auth: 'viewer/operator/admin' },
+  { path: '/api/knowledge-base/search', methods: ['GET'], description: 'Knowledge Base wiki search', tag: 'Knowledge Base', auth: 'viewer' },
+  { path: '/api/knowledge-base/links', methods: ['GET'], description: 'Knowledge Base backlinks and outgoing links', tag: 'Knowledge Base', auth: 'viewer' },
+  { path: '/api/knowledge-base/graph', methods: ['GET'], description: 'Knowledge Base wiki graph', tag: 'Knowledge Base', auth: 'viewer' },
+  { path: '/api/knowledge-base/health', methods: ['GET'], description: 'Knowledge Base health diagnostics', tag: 'Knowledge Base', auth: 'viewer' },
+  { path: '/api/knowledge-base/governance', methods: ['GET', 'POST'], description: 'Knowledge Base governance queue and backfill', tag: 'Knowledge Base', auth: 'viewer/operator' },
+  { path: '/api/knowledge-base/process', methods: ['POST'], description: 'Knowledge Base maintenance pipeline', tag: 'Knowledge Base', auth: 'operator' },
+  { path: '/api/knowledge-base/structured', methods: ['GET'], description: 'Hermes structured knowledge entities', tag: 'Knowledge Base', auth: 'viewer' },
+  { path: '/api/knowledge-base/memory', methods: ['GET'], description: 'Hermes agent memory bridge', tag: 'Knowledge Base', auth: 'viewer' },
+  { path: '/api/obsidian/status', methods: ['GET'], description: 'Obsidian vault integration status', tag: 'Obsidian', auth: 'viewer/token' },
+  { path: '/api/obsidian/connect', methods: ['POST'], description: 'Record Obsidian plugin connection heartbeat', tag: 'Obsidian', auth: 'operator/token' },
+  { path: '/api/obsidian/sync', methods: ['POST'], description: 'Scan managed Obsidian vault content into Hermes sync tables', tag: 'Obsidian', auth: 'operator/token' },
+  { path: '/api/obsidian/conflicts', methods: ['GET', 'POST'], description: 'List or refresh Obsidian sync conflicts', tag: 'Obsidian', auth: 'viewer/operator/token' },
+  { path: '/api/obsidian/conflicts/resolve', methods: ['POST'], description: 'Resolve an Obsidian sync conflict', tag: 'Obsidian', auth: 'operator/token' },
+  { path: '/api/obsidian/imports', methods: ['GET', 'POST'], description: 'List or import external Obsidian vault notes into Hermes-managed space', tag: 'Obsidian', auth: 'viewer/operator/token' },
 
   // ── Search & Mentions ─────────────────────────────
   { path: '/api/search', methods: ['GET'], description: 'Full-text search across entities', tag: 'Search', auth: 'viewer' },
@@ -150,10 +166,6 @@ const endpoints: Endpoint[] = [
 
   // ── Docs ──────────────────────────────────────────
   { path: '/api/docs', methods: ['GET'], description: 'OpenAPI spec (JSON)', tag: 'Docs', auth: 'public' },
-  { path: '/api/docs/tree', methods: ['GET'], description: 'Documentation tree', tag: 'Docs', auth: 'public' },
-  { path: '/api/docs/content', methods: ['GET'], description: 'Documentation page content', tag: 'Docs', auth: 'public' },
-  { path: '/api/docs/search', methods: ['GET'], description: 'Documentation search', tag: 'Docs', auth: 'public' },
-
   // ── Discovery ─────────────────────────────────────
   { path: '/api/index', methods: ['GET'], description: 'API endpoint catalog (this endpoint)', tag: 'Discovery', auth: 'public' },
 ]
@@ -170,8 +182,22 @@ const payload = {
   },
   docs: {
     openapi: '/api/docs',
-    tree: '/api/docs/tree',
-    search: '/api/docs/search',
+  },
+  knowledge_base: {
+    tree: '/api/knowledge-base/tree',
+    content: '/api/knowledge-base/content',
+    search: '/api/knowledge-base/search',
+    graph: '/api/knowledge-base/graph',
+    governance: '/api/knowledge-base/governance',
+  },
+  obsidian: {
+    status: '/api/obsidian/status',
+    sync: '/api/obsidian/sync',
+    conflicts: '/api/obsidian/conflicts',
+    imports: '/api/obsidian/imports',
+  },
+  deprecated_compatibility: {
+    memory: '/api/memory',
   },
 }
 

@@ -1,21 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAllGatewaySessions } from '@/lib/sessions'
-import { syncClaudeSessions } from '@/lib/claude-sessions'
-import { scanCodexSessions } from '@/lib/codex-sessions'
-import { scanHermesSessions } from '@/lib/hermes-sessions'
+import { getLocalSessionIndexMeta, queueLocalSessionIndexSync, readIndexedLocalSessions } from '@/lib/local-session-index'
 import { getDatabase, db_helpers } from '@/lib/db'
 import { requireRole } from '@/lib/auth'
-import { HERMES_ROUTING_BINDINGS_SETTING_KEY, parseHermesRoutingBindings, resolveHermesBindingForSource } from '@/lib/hermes-routing'
-import {
-  HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY,
-  buildHermesRuntimeBindingTargets,
-  parseHermesRuntimeProfileBindings,
-} from '@/lib/hermes-runtime-profiles'
 import { callOpenClawGateway } from '@/lib/openclaw-gateway'
 import { mutationLimiter } from '@/lib/rate-limit'
 import { logger } from '@/lib/logger'
-
-const LOCAL_SESSION_ACTIVE_WINDOW_MS = 90 * 60 * 1000
 
 export async function GET(request: NextRequest) {
   const auth = requireRole(request, 'viewer')
@@ -24,30 +14,24 @@ export async function GET(request: NextRequest) {
   try {
     const gatewaySessions = getAllGatewaySessions()
     const mappedGatewaySessions = mapGatewaySessions(gatewaySessions)
-
-    // Always include local sessions alongside gateway sessions
-    await syncClaudeSessions()
-    const claudeSessions = getLocalClaudeSessions()
-    const codexSessions = getLocalCodexSessions()
-    const settingsStmt = getDatabase().prepare('SELECT value FROM settings WHERE key = ? LIMIT 1')
-    const hermesBindings = parseHermesRoutingBindings(
-      (settingsStmt.get(HERMES_ROUTING_BINDINGS_SETTING_KEY) as { value?: string } | undefined)?.value,
-    )
-    const hermesRuntimeBindings = parseHermesRuntimeProfileBindings(
-      (settingsStmt.get(HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY) as { value?: string } | undefined)?.value,
-    )
-    const hermesSessions = getLocalHermesSessions(hermesBindings, hermesRuntimeBindings)
-    const localMerged = mergeLocalSessions(claudeSessions, codexSessions, hermesSessions)
-
-    if (mappedGatewaySessions.length === 0 && localMerged.length === 0) {
-      return NextResponse.json({ sessions: [] })
+    const localIndexMeta = getLocalSessionIndexMeta()
+    if (localIndexMeta.stale) {
+      queueLocalSessionIndexSync()
     }
+    const indexedLocalSessions = getIndexedLocalSessions()
 
-    const merged = dedupeAndSortSessions([...mappedGatewaySessions, ...localMerged])
-    return NextResponse.json({ sessions: merged })
+    const merged = dedupeAndSortSessions([...mappedGatewaySessions, ...indexedLocalSessions])
+    return NextResponse.json({
+      sessions: merged,
+      meta: {
+        indexedAt: localIndexMeta.indexedAt,
+        stale: localIndexMeta.stale,
+        sources: localIndexMeta.sources,
+      },
+    })
   } catch (error) {
     logger.error({ err: error }, 'Sessions API error')
-    return NextResponse.json({ sessions: [] })
+    return NextResponse.json({ sessions: [], meta: { indexedAt: null, stale: true, sources: null } })
   }
 }
 
@@ -208,155 +192,56 @@ function mapGatewaySessions(gatewaySessions: ReturnType<typeof getAllGatewaySess
   })
 }
 
-/** Read Claude Code sessions from the local SQLite database */
-function getLocalClaudeSessions() {
+function getIndexedLocalSessions() {
   try {
-    const db = getDatabase()
-    const rows = db.prepare(
-      'SELECT * FROM claude_sessions ORDER BY last_message_at DESC LIMIT 50'
-    ).all() as Array<Record<string, any>>
+    const rows = readIndexedLocalSessions()
 
-    return rows.map((s) => {
-      const total = (s.input_tokens || 0) + (s.output_tokens || 0)
-      const lastMsg = s.last_message_at ? new Date(s.last_message_at).getTime() : 0
-      // Trust scanner state first, but fall back to derived recency so UI doesn't
-      // show stale "xh ago" when the active flag lags behind disk updates.
-      const derivedActive = lastMsg > 0 && (Date.now() - lastMsg) < LOCAL_SESSION_ACTIVE_WINDOW_MS
-      const isActive = s.is_active === 1 || derivedActive
-      const effectiveLastActivity = isActive ? Date.now() : lastMsg
-      return {
-        id: s.session_id,
-        key: s.project_slug || s.session_id,
-        agent: s.project_slug || 'local',
-        kind: 'claude-code',
-        age: isActive ? 'now' : formatAge(lastMsg),
-        model: s.model || 'unknown',
-        tokens: `${formatTokens(s.input_tokens || 0)}/${formatTokens(s.output_tokens || 0)}`,
-        channel: 'local',
-        flags: s.git_branch ? [s.git_branch] : [],
-        active: isActive,
-        startTime: s.first_message_at ? new Date(s.first_message_at).getTime() : 0,
-        lastActivity: effectiveLastActivity,
-        source: 'local' as const,
-        userMessages: s.user_messages || 0,
-        assistantMessages: s.assistant_messages || 0,
-        toolUses: s.tool_uses || 0,
-        estimatedCost: s.estimated_cost || 0,
-        lastUserPrompt: s.last_user_prompt || null,
-        workingDir: s.project_path || null,
-      }
-    })
-  } catch (err) {
-    logger.warn({ err }, 'Failed to read local Claude sessions')
-    return []
-  }
-}
-
-function getLocalCodexSessions() {
-  try {
-    const rows = scanCodexSessions(100)
-
-    return rows.map((s) => {
-      const total = s.totalTokens || (s.inputTokens + s.outputTokens)
-      const lastMsg = s.lastMessageAt ? new Date(s.lastMessageAt).getTime() : 0
-      const firstMsg = s.firstMessageAt ? new Date(s.firstMessageAt).getTime() : 0
-      const effectiveLastActivity = s.isActive ? Date.now() : lastMsg
-      return {
-        id: s.sessionId,
-        key: s.projectSlug || s.sessionId,
-        agent: s.projectSlug || 'codex-local',
-        kind: 'codex-cli',
-        age: s.isActive ? 'now' : formatAge(lastMsg),
-        model: s.model || 'codex',
-        tokens: `${formatTokens(s.inputTokens || 0)}/${formatTokens(s.outputTokens || 0)}`,
-        channel: 'local',
-        flags: [],
-        active: s.isActive,
-        startTime: firstMsg,
-        lastActivity: effectiveLastActivity,
-        source: 'local' as const,
-        userMessages: s.userMessages || 0,
-        assistantMessages: s.assistantMessages || 0,
-        toolUses: 0,
-        estimatedCost: 0,
-        lastUserPrompt: null,
-        totalTokens: total,
-        workingDir: s.projectPath || null,
-      }
-    })
-  } catch (err) {
-    logger.warn({ err }, 'Failed to read local Codex sessions')
-    return []
-  }
-}
-
-function getLocalHermesSessions(
-  hermesBindings: Record<string, string> = {},
-  hermesRuntimeBindings: Record<string, string> = {},
-) {
-  try {
-    const runtimeProfiles = buildHermesRuntimeBindingTargets(hermesRuntimeBindings)
-      .map((binding) => ({
-        name: binding.runtimeProfileName,
-        label: binding.runtimeProfileLabel,
-        hermesHome: binding.runtimeProfileHome,
-        envPath: '',
-        description: '',
-        isDefault: binding.runtimeProfileName === 'default',
-        exists: binding.runtimeProfileExists,
-      }))
-      .filter((profile, index, all) => all.findIndex((entry) => entry.name === profile.name) === index)
-    const rows = scanHermesSessions(100, runtimeProfiles)
-
-    return rows.map((s) => {
-      const binding = resolveHermesBindingForSource(s.source || 'cli', hermesBindings)
-      const total = s.inputTokens + s.outputTokens
-      const lastMsg = s.lastMessageAt ? new Date(s.lastMessageAt).getTime() : 0
-      const firstMsg = s.firstMessageAt ? new Date(s.firstMessageAt).getTime() : 0
-      const effectiveLastActivity = s.isActive ? Date.now() : lastMsg
+    return rows.map((session) => {
+      const lastMessageAt = session.last_message_at ? new Date(session.last_message_at).getTime() : 0
+      const firstMessageAt = session.first_message_at ? new Date(session.first_message_at).getTime() : 0
+      const isActive = session.is_active === 1
       const flags = []
-      if (s.source && s.source !== 'cli') flags.push(s.source)
-      if (binding.profile !== 'primary') flags.push(binding.profileBadge)
+      if (session.git_branch) flags.push(session.git_branch)
+      if (session.source_type === 'hermes' && session.session_source && session.session_source !== 'cli') {
+        flags.push(session.session_source)
+      }
+      if (session.source_type === 'hermes' && session.profile_label && session.profile !== 'primary') {
+        flags.push(session.profile_label)
+      }
+
       return {
-        id: s.sessionId,
-        key: s.title || s.sessionId,
-        agent: 'hermes',
-        kind: 'hermes',
-        age: s.isActive ? 'now' : formatAge(lastMsg),
-        model: s.model || 'hermes',
-        tokens: `${formatTokens(s.inputTokens)}/${formatTokens(s.outputTokens)}`,
-        channel: s.source || 'cli',
+        id: session.session_id,
+        key: session.title || session.project_slug || session.session_id,
+        agent: session.source_type === 'hermes'
+          ? 'hermes'
+          : session.project_slug || (session.source_type === 'codex' ? 'codex-local' : 'local'),
+        kind: session.source_type === 'claude' ? 'claude-code' : session.source_type === 'codex' ? 'codex-cli' : 'hermes',
+        age: isActive ? 'now' : formatAge(lastMessageAt),
+        model: session.model || (session.source_type === 'hermes' ? 'hermes' : session.source_type === 'codex' ? 'codex' : 'unknown'),
+        tokens: `${formatTokens(session.input_tokens || 0)}/${formatTokens(session.output_tokens || 0)}`,
+        channel: session.session_source || 'local',
         flags,
-        active: s.isActive,
-        startTime: firstMsg,
-        lastActivity: effectiveLastActivity,
+        active: isActive,
+        startTime: firstMessageAt,
+        lastActivity: isActive ? Date.now() : lastMessageAt,
         source: 'local' as const,
-        profile: binding.profile,
-        profileLabel: binding.profileLabel,
-        runtimeProfileName: s.runtimeProfileName,
-        runtimeProfileLabel: s.runtimeProfileLabel,
-        userMessages: s.messageCount,
-        assistantMessages: 0,
-        toolUses: s.toolCallCount,
-        estimatedCost: 0,
-        lastUserPrompt: s.title || null,
-        totalTokens: total,
-        workingDir: null,
+        profile: session.profile || undefined,
+        profileLabel: session.profile_label || undefined,
+        runtimeProfileName: session.runtime_profile_name || undefined,
+        runtimeProfileLabel: session.runtime_profile_label || undefined,
+        userMessages: session.user_messages || 0,
+        assistantMessages: session.assistant_messages || 0,
+        toolUses: session.tool_uses || 0,
+        estimatedCost: session.estimated_cost || 0,
+        lastUserPrompt: session.last_user_prompt || null,
+        totalTokens: session.total_tokens || ((session.input_tokens || 0) + (session.output_tokens || 0)),
+        workingDir: session.project_path || null,
       }
     })
   } catch (err) {
-    logger.warn({ err }, 'Failed to read local Hermes sessions')
+    logger.warn({ err }, 'Failed to read indexed local sessions')
     return []
   }
-}
-
-function mergeLocalSessions(
-  claudeSessions: Array<Record<string, any>>,
-  codexSessions: Array<Record<string, any>>,
-  hermesSessions: Array<Record<string, any>> = [],
-) {
-  const merged = [...claudeSessions, ...codexSessions, ...hermesSessions]
-  return dedupeAndSortSessions(merged)
 }
 
 function dedupeAndSortSessions(merged: Array<Record<string, any>>) {

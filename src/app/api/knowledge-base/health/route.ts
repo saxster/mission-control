@@ -4,52 +4,35 @@ import { readLimiter } from '@/lib/rate-limit'
 import { runHealthDiagnostics } from '@/lib/memory-utils'
 import { getKnowledgeBaseContext } from '@/lib/knowledge-base'
 import { logger } from '@/lib/logger'
-import {
-  decorateLegacyMemoryResponse,
-  legacyMemoryJson,
-  logLegacyMemoryRouteHit,
-} from '@/lib/legacy-memory-route'
-
-const LEGACY_ROUTE = { canonicalPath: '/api/knowledge-base/health' } as const
 
 export async function GET(request: NextRequest) {
   const auth = requireRole(request, 'viewer')
-  if ('error' in auth) return legacyMemoryJson({ error: auth.error }, LEGACY_ROUTE, { status: auth.status })
+  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
   const limited = readLimiter(request)
-  if (limited) return decorateLegacyMemoryResponse(limited, LEGACY_ROUTE)
+  if (limited) return limited
 
   try {
     const runtimeProfileName = request.nextUrl.searchParams.get('runtimeProfileName')
-    logLegacyMemoryRouteHit({
-      request,
-      user: auth.user,
-      runtimeProfileName,
-      action: 'health',
-      ...LEGACY_ROUTE,
-    })
-
     const context = getKnowledgeBaseContext(runtimeProfileName)
     if (!context.wikiExists) {
-      return legacyMemoryJson({
+      return NextResponse.json({
         overall: 'warning',
         overallScore: 0,
         categories: [],
         generatedAt: Date.now(),
         initialized: false,
         emptyStateMessage: context.firstRunReason,
-        runtimeProfileName: context.runtimeProfile.name,
-      }, LEGACY_ROUTE)
+      })
     }
-
     const report = await runHealthDiagnostics(context.wikiRoot)
-    return legacyMemoryJson({
+    return NextResponse.json({
       ...report,
       initialized: true,
       runtimeProfileName: context.runtimeProfile.name,
-    }, LEGACY_ROUTE)
+    })
   } catch (err) {
-    logger.error({ err }, 'Legacy memory health API error')
-    return legacyMemoryJson({ error: 'Internal server error' }, LEGACY_ROUTE, { status: 500 })
+    logger.error({ err }, 'Knowledge Base health API error')
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

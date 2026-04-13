@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
 import { readLimiter } from '@/lib/rate-limit'
 import { logger } from '@/lib/logger'
-import { getDocsTree, listDocsRoots } from '@/lib/docs-knowledge'
+import { getKnowledgeBaseContext, getKnowledgeBaseTree } from '@/lib/knowledge-base'
 
 export async function GET(request: NextRequest) {
   const auth = requireRole(request, 'viewer')
@@ -12,10 +12,19 @@ export async function GET(request: NextRequest) {
   if (rateCheck) return rateCheck
 
   try {
-    const tree = await getDocsTree()
-    return NextResponse.json({ roots: listDocsRoots(), tree })
+    const runtimeProfileName = request.nextUrl.searchParams.get('runtimeProfileName')
+    const context = getKnowledgeBaseContext(runtimeProfileName)
+    const tree = await getKnowledgeBaseTree(context)
+    return NextResponse.json({
+      roots: context.wikiRoots,
+      tree,
+      initialized: context.wikiExists,
+      emptyStateMessage: context.firstRunReason,
+      runtimeProfileName: context.runtimeProfile.name,
+      legacy: true,
+    })
   } catch (error) {
-    logger.error({ err: error }, 'GET /api/docs/tree error')
-    return NextResponse.json({ error: 'Failed to load docs tree' }, { status: 500 })
+    logger.error({ err: error }, 'GET /api/docs/tree legacy route error')
+    return NextResponse.json({ error: 'Failed to load knowledge base tree' }, { status: 500 })
   }
 }

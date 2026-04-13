@@ -2,51 +2,67 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
 import { readLimiter } from '@/lib/rate-limit'
 import { buildLinkGraph, extractWikiLinks } from '@/lib/memory-utils'
-import { readFile } from 'fs/promises'
+import { getKnowledgeBaseContext, isKnowledgeBaseWikiPathAllowed, resolveKnowledgeBaseContentPath } from '@/lib/knowledge-base'
+import { readFile } from 'node:fs/promises'
 import { logger } from '@/lib/logger'
-import { MEMORY_PATH, isPathAllowed, resolveSafeMemoryPath } from '@/lib/memory-path'
+import {
+  decorateLegacyMemoryResponse,
+  legacyMemoryJson,
+  logLegacyMemoryRouteHit,
+} from '@/lib/legacy-memory-route'
+
+const LEGACY_ROUTE = { canonicalPath: '/api/knowledge-base/links' } as const
 
 export async function GET(request: NextRequest) {
   const auth = requireRole(request, 'viewer')
-  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  if ('error' in auth) return legacyMemoryJson({ error: auth.error }, LEGACY_ROUTE, { status: auth.status })
 
   const limited = readLimiter(request)
-  if (limited) return limited
+  if (limited) return decorateLegacyMemoryResponse(limited, LEGACY_ROUTE)
 
-  if (!MEMORY_PATH) {
-    return NextResponse.json({ error: 'Memory directory not configured' }, { status: 500 })
-  }
-
-  const { searchParams } = new URL(request.url)
-  const filePath = searchParams.get('file')
+  const runtimeProfileName = request.nextUrl.searchParams.get('runtimeProfileName')
+  const filePath = request.nextUrl.searchParams.get('file')
 
   try {
-    if (filePath) {
-      if (!isPathAllowed(filePath)) {
-        return NextResponse.json({ error: 'Path not allowed' }, { status: 403 })
-      }
-      const fullPath = await resolveSafeMemoryPath(MEMORY_PATH, filePath)
-      const content = await readFile(fullPath, 'utf-8')
-      const links = extractWikiLinks(content)
+    logLegacyMemoryRouteHit({
+      request,
+      user: auth.user,
+      runtimeProfileName,
+      action: filePath ? 'links:file' : 'links',
+      ...LEGACY_ROUTE,
+    })
 
-      // Also find backlinks from the full graph
-      const graph = await buildLinkGraph(MEMORY_PATH)
-      const node = graph.nodes[filePath]
-      const incoming = node?.incoming ?? []
-      const outgoing = node?.outgoing ?? []
-
-      return NextResponse.json({
-        file: filePath,
-        wikiLinks: links,
-        outgoing,
-        incoming,
-      })
+    const context = getKnowledgeBaseContext(runtimeProfileName)
+    if (!context.wikiExists) {
+      return legacyMemoryJson({
+        nodes: [],
+        totalFiles: 0,
+        totalLinks: 0,
+        orphans: [],
+        initialized: false,
+        emptyStateMessage: context.firstRunReason,
+        runtimeProfileName: context.runtimeProfile.name,
+      }, LEGACY_ROUTE)
     }
 
-    // Return full link graph
-    const graph = await buildLinkGraph(MEMORY_PATH)
+    if (filePath) {
+      if (!isKnowledgeBaseWikiPathAllowed(context, filePath)) {
+        return legacyMemoryJson({ error: 'Path not allowed' }, LEGACY_ROUTE, { status: 403 })
+      }
+      const fullPath = await resolveKnowledgeBaseContentPath(context, filePath, 'wiki')
+      const content = await readFile(fullPath, 'utf-8')
+      const graph = await buildLinkGraph(context.wikiRoot)
+      const node = graph.nodes[filePath]
+      return legacyMemoryJson({
+        file: filePath,
+        wikiLinks: extractWikiLinks(content),
+        outgoing: node?.outgoing ?? [],
+        incoming: node?.incoming ?? [],
+        runtimeProfileName: context.runtimeProfile.name,
+      }, LEGACY_ROUTE)
+    }
 
-    // Serialize for the frontend (strip wikiLinks detail for the full graph)
+    const graph = await buildLinkGraph(context.wikiRoot)
     const nodes = Object.values(graph.nodes).map((n) => ({
       path: n.path,
       name: n.name,
@@ -54,16 +70,19 @@ export async function GET(request: NextRequest) {
       incoming: n.incoming,
       linkCount: n.outgoing.length + n.incoming.length,
       hasSchema: n.schema !== null,
+      pageType: n.path.split('/')[0] || 'root',
     }))
 
-    return NextResponse.json({
+    return legacyMemoryJson({
       nodes,
       totalFiles: graph.totalFiles,
       totalLinks: graph.totalLinks,
       orphans: graph.orphans,
-    })
+      initialized: true,
+      runtimeProfileName: context.runtimeProfile.name,
+    }, LEGACY_ROUTE)
   } catch (err) {
-    logger.error({ err }, 'Memory links API error')
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    logger.error({ err }, 'Legacy memory links API error')
+    return legacyMemoryJson({ error: 'Internal server error' }, LEGACY_ROUTE, { status: 500 })
   }
 }

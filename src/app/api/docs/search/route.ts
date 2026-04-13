@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
 import { readLimiter } from '@/lib/rate-limit'
 import { logger } from '@/lib/logger'
-import { searchDocs } from '@/lib/docs-knowledge'
+import { getKnowledgeBaseContext, searchKnowledgeBase } from '@/lib/knowledge-base'
 
 export async function GET(request: NextRequest) {
   const auth = requireRole(request, 'viewer')
@@ -20,10 +20,20 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Query required' }, { status: 400 })
     }
 
-    const results = await searchDocs(query, limit)
-    return NextResponse.json({ query, results, count: results.length })
+    const runtimeProfileName = request.nextUrl.searchParams.get('runtimeProfileName')
+    const context = getKnowledgeBaseContext(runtimeProfileName)
+    const results = await searchKnowledgeBase(context, query, limit)
+    return NextResponse.json({
+      query,
+      results,
+      count: results.length,
+      initialized: context.wikiExists,
+      emptyStateMessage: context.firstRunReason,
+      runtimeProfileName: context.runtimeProfile.name,
+      legacy: true,
+    })
   } catch (error) {
-    logger.error({ err: error }, 'GET /api/docs/search error')
-    return NextResponse.json({ error: 'Failed to search docs' }, { status: 500 })
+    logger.error({ err: error }, 'GET /api/docs/search legacy route error')
+    return NextResponse.json({ error: 'Failed to search knowledge base' }, { status: 500 })
   }
 }

@@ -30,7 +30,7 @@ function agentColumnValue(agentId: string): string | number {
  * GET /api/agents/[id]/memory - Get agent's working memory
  *
  * Working memory is stored in the agents.working_memory DB column.
- * This endpoint is per-agent scratchpad memory (not the global Memory Browser filesystem view).
+ * This endpoint is per-agent scratchpad memory (not the global Knowledge Base filesystem view).
  */
 export async function GET(
   request: NextRequest,

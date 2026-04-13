@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth'
 import { readLimiter } from '@/lib/rate-limit'
 import { logger } from '@/lib/logger'
-import { readDocsContent } from '@/lib/docs-knowledge'
+import { getKnowledgeBaseContext, isKnowledgeBaseWikiPathAllowed, readKnowledgeBaseContent } from '@/lib/knowledge-base'
+import { validateSchema } from '@/lib/memory-utils'
 
 export async function GET(request: NextRequest) {
   const auth = requireRole(request, 'viewer')
@@ -19,21 +20,29 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Path required' }, { status: 400 })
     }
 
-    try {
-      const doc = await readDocsContent(path)
-      return NextResponse.json(doc)
-    } catch (error) {
-      const message = (error as Error).message || ''
-      if (message.includes('Path not allowed')) {
-        return NextResponse.json({ error: 'Path not allowed' }, { status: 403 })
-      }
-      if (message.includes('not configured')) {
-        return NextResponse.json({ error: 'Docs directory not configured' }, { status: 500 })
-      }
-      return NextResponse.json({ error: 'File not found' }, { status: 404 })
+    const runtimeProfileName = request.nextUrl.searchParams.get('runtimeProfileName')
+    const context = getKnowledgeBaseContext(runtimeProfileName)
+    if (!isKnowledgeBaseWikiPathAllowed(context, path)) {
+      return NextResponse.json({ error: 'Path not allowed' }, { status: 403 })
     }
+
+    const doc = await readKnowledgeBaseContent(context, path, 'wiki')
+    return NextResponse.json({
+      ...doc,
+      runtimeProfileName: context.runtimeProfile.name,
+      scope: 'wiki',
+      schema: doc.path.endsWith('.md') ? validateSchema(doc.content) : null,
+      legacy: true,
+    })
   } catch (error) {
-    logger.error({ err: error }, 'GET /api/docs/content error')
-    return NextResponse.json({ error: 'Failed to load doc content' }, { status: 500 })
+    const message = (error as Error).message || ''
+    if (message.includes('Path not allowed')) {
+      return NextResponse.json({ error: 'Path not allowed' }, { status: 403 })
+    }
+    if (message.includes('Knowledge Base wiki not initialized')) {
+      return NextResponse.json({ error: message }, { status: 404 })
+    }
+    logger.error({ err: error }, 'GET /api/docs/content legacy route error')
+    return NextResponse.json({ error: 'Failed to load knowledge base content' }, { status: 500 })
   }
 }

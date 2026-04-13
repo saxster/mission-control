@@ -1,69 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { config } from '@/lib/config'
 import { requireRole } from '@/lib/auth'
 import { mutationLimiter } from '@/lib/rate-limit'
 import { reflectPass, reweavePass, generateMOCs, gapDetectPass, consolidatePass } from '@/lib/memory-utils'
+import { getKnowledgeBaseContext } from '@/lib/knowledge-base'
 import { logger } from '@/lib/logger'
+import {
+  decorateLegacyMemoryResponse,
+  legacyMemoryJson,
+  logLegacyMemoryRouteHit,
+} from '@/lib/legacy-memory-route'
 
-const MEMORY_PATH = config.memoryDir
+const LEGACY_ROUTE = { canonicalPath: '/api/knowledge-base/process' } as const
 
-/**
- * Processing pipeline endpoint — runs knowledge maintenance operations.
- * Actions: reflect, reweave, generate-moc
- *
- * These mirror Ars Contexta's 6 Rs processing pipeline, adapted for MC:
- * - reflect: Find connection opportunities between files
- * - reweave: Identify stale files needing updates from newer linked files
- * - generate-moc: Auto-generate Maps of Content from file clusters
- */
 export async function POST(request: NextRequest) {
   const auth = requireRole(request, 'operator')
-  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  if ('error' in auth) return legacyMemoryJson({ error: auth.error }, LEGACY_ROUTE, { status: auth.status })
 
   const rateCheck = mutationLimiter(request)
-  if (rateCheck) return rateCheck
-
-  if (!MEMORY_PATH) {
-    return NextResponse.json({ error: 'Memory directory not configured' }, { status: 500 })
-  }
+  if (rateCheck) return decorateLegacyMemoryResponse(rateCheck, LEGACY_ROUTE)
 
   try {
     const body = await request.json()
-    const { action } = body
+    const runtimeProfileName = typeof body?.runtimeProfileName === 'string' ? body.runtimeProfileName : null
+    const action = typeof body?.action === 'string' ? body.action : ''
+    const context = getKnowledgeBaseContext(runtimeProfileName)
 
-    if (action === 'reflect') {
-      const result = await reflectPass(MEMORY_PATH)
-      return NextResponse.json(result)
+    logLegacyMemoryRouteHit({
+      request,
+      user: auth.user,
+      runtimeProfileName,
+      action,
+      ...LEGACY_ROUTE,
+    })
+
+    if (!context.wikiExists) {
+      return legacyMemoryJson(
+        { error: context.firstRunReason || 'Knowledge Base wiki not initialized' },
+        LEGACY_ROUTE,
+        { status: 400 },
+      )
     }
 
-    if (action === 'reweave') {
-      const result = await reweavePass(MEMORY_PATH)
-      return NextResponse.json(result)
-    }
+    if (action === 'reflect') return legacyMemoryJson(await reflectPass(context.wikiRoot), LEGACY_ROUTE)
+    if (action === 'reweave') return legacyMemoryJson(await reweavePass(context.wikiRoot), LEGACY_ROUTE)
+    if (action === 'gap-detect') return legacyMemoryJson(await gapDetectPass(context.wikiRoot), LEGACY_ROUTE)
+    if (action === 'consolidate') return legacyMemoryJson(await consolidatePass(context.wikiRoot), LEGACY_ROUTE)
 
     if (action === 'generate-moc') {
-      const mocs = await generateMOCs(MEMORY_PATH)
-      return NextResponse.json({
+      const groups = await generateMOCs(context.wikiRoot)
+      return legacyMemoryJson({
         action: 'generate-moc',
-        groups: mocs,
-        totalGroups: mocs.length,
-        totalEntries: mocs.reduce((s, g) => s + g.entries.length, 0),
-      })
+        groups,
+        totalGroups: groups.length,
+        totalEntries: groups.reduce((sum, group) => sum + group.entries.length, 0),
+      }, LEGACY_ROUTE)
     }
 
-    if (action === 'gap-detect') {
-      const result = await gapDetectPass(MEMORY_PATH)
-      return NextResponse.json(result)
-    }
-
-    if (action === 'consolidate') {
-      const result = await consolidatePass(MEMORY_PATH)
-      return NextResponse.json(result)
-    }
-
-    return NextResponse.json({ error: 'Invalid action. Use: reflect, reweave, generate-moc, gap-detect, consolidate' }, { status: 400 })
+    return legacyMemoryJson(
+      { error: 'Invalid action. Use: reflect, reweave, generate-moc, gap-detect, consolidate' },
+      LEGACY_ROUTE,
+      { status: 400 },
+    )
   } catch (err) {
-    logger.error({ err }, 'Memory process API error')
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    logger.error({ err }, 'Legacy memory process API error')
+    return legacyMemoryJson({ error: 'Internal server error' }, LEGACY_ROUTE, { status: 500 })
   }
 }
