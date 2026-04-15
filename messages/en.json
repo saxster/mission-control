@@ -102,11 +102,14 @@
     "group": {
       "observe": "OBSERVE",
       "automate": "AUTOMATE",
-      "admin": "ADMIN"
+      "admin": "ADMIN",
+      "create": "CREATE"
     },
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
-    "more": "More"
+    "more": "More",
+    "studio": "Studio",
+    "library": "Library"
   },
   "settings": {
     "language": "Language",

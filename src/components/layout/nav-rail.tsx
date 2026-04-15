@@ -54,6 +54,14 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
+    id: 'create',
+    label: 'CREATE',
+    items: [
+      { id: 'studio', label: 'Studio', icon: <StudioIcon />, priority: false },
+      { id: 'library', label: 'Library', icon: <LibraryIcon />, priority: false },
+    ],
+  },
+  {
     id: 'automate',
     label: 'AUTOMATE',
     items: [
@@ -112,10 +120,13 @@ const navItemTranslationKeys: Record<string, string> = {
   integrations: 'integrations',
   debug: 'debug',
   settings: 'settings',
+  studio: 'studio',
+  library: 'library',
 }
 
 // Map group IDs to translation keys in the 'nav.group' namespace
 const groupTranslationKeys: Record<string, string> = {
+  create: 'create',
   observe: 'observe',
   automate: 'automate',
   admin: 'admin',
@@ -1527,6 +1538,29 @@ function MonitorIcon() {
       <rect x="1" y="2" width="14" height="10" rx="1.5" />
       <polyline points="4,9 6,6 8,8 12,4" />
       <path d="M5 14h6" />
+    </svg>
+  )
+}
+
+function StudioIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="5.5" />
+      <circle cx="8" cy="8" r="2" />
+      <path d="M8 2.5V1" />
+      <path d="M8 15v-1.5" />
+      <path d="M2.5 8H1" />
+      <path d="M15 8h-1.5" />
+    </svg>
+  )
+}
+
+function LibraryIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2" width="5" height="6" rx="1" />
+      <rect x="9" y="2" width="5" height="6" rx="1" />
+      <rect x="2" y="10" width="12" height="4" rx="1" />
     </svg>
   )
 }

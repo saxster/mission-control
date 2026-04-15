@@ -55,3 +55,5 @@ export const LazyExecApprovalPanel = lazyNamedPanel(() => import('@/components/p
 export const LazyProjectManagerModal = lazyNamedPanel(() => import('@/components/modals/project-manager-modal'), 'ProjectManagerModal')
 export const LazySkillEvolutionPanel = dynamic(() => import('@/components/panels/skill-evolution-panel'), { loading: panelLoading })
 export const LazyCapabilitiesPanel = lazyNamedPanel(() => import('@/components/panels/capabilities-panel'), 'CapabilitiesPanel')
+export const LazyStudioPanel = lazyNamedPanel(() => import('@/components/panels/studio-panel'), 'StudioPanel')
+export const LazyLibraryPanel = lazyNamedPanel(() => import('@/components/panels/library-panel'), 'LibraryPanel')

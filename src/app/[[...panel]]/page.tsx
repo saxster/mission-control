@@ -52,6 +52,8 @@ import {
   LazyWebhookPanel,
   LazySuperAdminPanel,
   LazyCapabilitiesPanel,
+  LazyStudioPanel,
+  LazyLibraryPanel,
 } from '@/app/panel-registry'
 import { useWebSocket } from '@/lib/websocket'
 import { useServerEvents } from '@/lib/use-server-events'
@@ -671,6 +673,12 @@ function ContentRouter({ tab }: { tab: string }) {
       break
     case 'capabilities':
       panelContent = <LazyCapabilitiesPanel />
+      break
+    case 'studio':
+      panelContent = <LazyStudioPanel />
+      break
+    case 'library':
+      panelContent = <LazyLibraryPanel />
       break
     default: {
       panelContent = renderPluginPanel(tab)
