@@ -298,7 +298,10 @@ export function isKnowledgeBaseWikiPathWritable(context: KnowledgeBaseContext, r
 export function isKnowledgeBaseStructuredPathAllowed(context: KnowledgeBaseContext, relativePath: string): boolean {
   const normalized = normalizeRelativePath(relativePath)
   if (!normalized || !context.structuredVaultPath) return false
-  const roots = context.structuredFolders.map((folder) => normalizeRelativePath(join(context.agentPrefix, folder.folderName)))
+  const roots = context.structuredFolders.flatMap((folder) => ([
+    normalizeRelativePath(folder.folderName),
+    normalizeRelativePath(join(context.agentPrefix, folder.folderName)),
+  ]))
   return roots.some((root) => normalized === root || normalized.startsWith(`${root}/`))
 }
 
@@ -308,10 +311,14 @@ export async function resolveKnowledgeBaseContentPath(
   scope: KnowledgeBaseScope = 'wiki',
 ): Promise<string> {
   if (scope === 'structured') {
-    if (!context.structuredVaultPath || !isKnowledgeBaseStructuredPathAllowed(context, relativePath)) {
+    const normalized = normalizeRelativePath(relativePath)
+    if (!context.structuredVaultPath || !isKnowledgeBaseStructuredPathAllowed(context, normalized)) {
       throw new Error('Path not allowed')
     }
-    return resolveSafePath(dirname(context.structuredVaultPath), relativePath)
+    if (normalized.startsWith(`${context.agentPrefix}/`)) {
+      return resolveSafePath(dirname(context.structuredVaultPath), normalized)
+    }
+    return resolveSafePath(context.structuredVaultPath, normalized)
   }
 
   if (!context.wikiExists) throw new Error('Knowledge Base wiki not initialized')

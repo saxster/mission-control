@@ -106,6 +106,8 @@ const endpoints: Endpoint[] = [
   { path: '/api/knowledge-base/graph', methods: ['GET'], description: 'Knowledge Base wiki graph', tag: 'Knowledge Base', auth: 'viewer' },
   { path: '/api/knowledge-base/health', methods: ['GET'], description: 'Knowledge Base health diagnostics', tag: 'Knowledge Base', auth: 'viewer' },
   { path: '/api/knowledge-base/governance', methods: ['GET', 'POST'], description: 'Knowledge Base governance queue and backfill', tag: 'Knowledge Base', auth: 'viewer/operator' },
+  { path: '/api/knowledge-base/sources', methods: ['GET', 'POST'], description: 'Knowledge Base source registry and ingest entry point', tag: 'Knowledge Base', auth: 'viewer/operator' },
+  { path: '/api/knowledge-base/sources/promote', methods: ['POST'], description: 'Promote an imported source into a Hermes wiki artifact', tag: 'Knowledge Base', auth: 'operator' },
   { path: '/api/knowledge-base/process', methods: ['POST'], description: 'Knowledge Base maintenance pipeline', tag: 'Knowledge Base', auth: 'operator' },
   { path: '/api/knowledge-base/structured', methods: ['GET'], description: 'Hermes structured knowledge entities', tag: 'Knowledge Base', auth: 'viewer' },
   { path: '/api/knowledge-base/memory', methods: ['GET'], description: 'Hermes agent memory bridge', tag: 'Knowledge Base', auth: 'viewer' },
@@ -189,6 +191,7 @@ const payload = {
     search: '/api/knowledge-base/search',
     graph: '/api/knowledge-base/graph',
     governance: '/api/knowledge-base/governance',
+    sources: '/api/knowledge-base/sources',
   },
   obsidian: {
     status: '/api/obsidian/status',

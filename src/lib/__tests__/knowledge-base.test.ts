@@ -65,4 +65,29 @@ describe('knowledge base resolver', () => {
     expect(context.wikiRoot).toBe(path.join(os.homedir(), 'hermes-kb'))
     expect(context.structuredVaultPath).toBe(path.join(vaultPath, 'Researcher'))
   })
+
+  it('allows structured notes with or without an agent prefix in the relative path', async () => {
+    const vaultPath = path.join(tempHomeDir, 'vault')
+    mkdirSync(path.join(vaultPath, 'Hermes', 'Notes'), { recursive: true })
+    writeFileSync(path.join(knowledgeBaseTestState.hermesHome, '.env'), `OBSIDIAN_VAULT_PATH=${vaultPath}\n`, 'utf8')
+    writeFileSync(path.join(knowledgeBaseTestState.hermesHome, 'config.yaml'), [
+      'knowledge:',
+      `  vault_path: "${vaultPath}"`,
+      '  agent_prefix: "Hermes"',
+    ].join('\n'), 'utf8')
+
+    const {
+      getKnowledgeBaseContext,
+      isKnowledgeBaseStructuredPathAllowed,
+      resolveKnowledgeBaseContentPath,
+    } = await import('@/lib/knowledge-base')
+    const context = getKnowledgeBaseContext()
+
+    expect(isKnowledgeBaseStructuredPathAllowed(context, 'Notes/Idea.md')).toBe(true)
+    expect(isKnowledgeBaseStructuredPathAllowed(context, 'Hermes/Notes/Idea.md')).toBe(true)
+    await expect(resolveKnowledgeBaseContentPath(context, 'Notes/Idea.md', 'structured'))
+      .resolves.toBe(path.join(vaultPath, 'Hermes', 'Notes', 'Idea.md'))
+    await expect(resolveKnowledgeBaseContentPath(context, 'Hermes/Notes/Idea.md', 'structured'))
+      .resolves.toBe(path.join(vaultPath, 'Hermes', 'Notes', 'Idea.md'))
+  })
 })

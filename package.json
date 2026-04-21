@@ -32,6 +32,7 @@
     "test:e2e:harness": "pnpm test:e2e:harness:local && pnpm test:e2e:harness:gateway",
     "qa:auth-state": "node scripts/create-playwright-auth-state.mjs",
     "qa:hermes-ui": "node scripts/qa-hermes-surfaces.mjs",
+    "qa:knowledge-base": "node scripts/qa-knowledge-base-surfaces.mjs",
     "test:all": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e",
     "quality:gate": "pnpm test:all",
     "postinstall": "node -e \"try{require('better-sqlite3')}catch(e){if(e.code==='ERR_DLOPEN_FAILED'||/NODE_MODULE_VERSION/.test(e.message)){console.error('\\n⚠  better-sqlite3 compiled for wrong Node version. Run: pnpm rebuild better-sqlite3\\n');process.exit(1)}}\""
