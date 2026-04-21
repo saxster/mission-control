@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: 'tests',
-  testIgnore: /openclaw-harness\.spec\.ts/,
+  testIgnore: /offline-harness\.spec\.ts/,
   timeout: 60_000,
   expect: {
     timeout: 10_000
@@ -18,13 +18,14 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } }
   ],
   webServer: {
-    command: 'node scripts/e2e-openclaw/start-e2e-server.mjs --mode=local',
+    command: 'node scripts/e2e-harness/start-e2e-server.mjs --mode=local',
     url: 'http://127.0.0.1:3005',
     reuseExistingServer: true,
     timeout: 120_000,
     env: {
       ...process.env,
       MISSION_CONTROL_TEST_MODE: process.env.MISSION_CONTROL_TEST_MODE || '1',
+      NEXT_PUBLIC_MISSION_CONTROL_TEST_MODE: process.env.NEXT_PUBLIC_MISSION_CONTROL_TEST_MODE || process.env.MISSION_CONTROL_TEST_MODE || '1',
       MC_DISABLE_RATE_LIMIT: process.env.MC_DISABLE_RATE_LIMIT || '1',
       MC_WORKLOAD_QUEUE_DEPTH_THROTTLE: process.env.MC_WORKLOAD_QUEUE_DEPTH_THROTTLE || '1000',
       MC_WORKLOAD_QUEUE_DEPTH_SHED: process.env.MC_WORKLOAD_QUEUE_DEPTH_SHED || '2000',

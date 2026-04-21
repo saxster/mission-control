@@ -7,10 +7,23 @@ import { LanguageSwitcherSelect } from '@/components/ui/language-switcher'
 import { useMissionControl } from '@/store'
 import { useNavigateToPanel } from '@/lib/navigation'
 import { SecurityScanCard } from '@/components/onboarding/security-scan-card'
+import { RuntimeSetupModal } from '@/components/onboarding/runtime-setup-modal'
 import { AgentRuntimesSection } from '@/components/settings/agent-runtimes-section'
 import { Loader } from '@/components/ui/loader'
 import { clearOnboardingDismissedThisSession, clearOnboardingReplayFromStart } from '@/lib/onboarding-session'
 import { resolveCoordinatorDeliveryTarget, type CoordinatorAgentRecord } from '@/lib/coordinator-routing'
+import {
+  HERMES_PROFILE_OPTIONS,
+  HERMES_ROUTING_BINDINGS_SETTING_KEY,
+  parseHermesRoutingBindings,
+  stringifyHermesRoutingBindings,
+  resolveHermesProfileLabel,
+} from '@/lib/hermes-routing'
+import {
+  HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY,
+  parseHermesRuntimeProfileBindings,
+  stringifyHermesRuntimeProfileBindings,
+} from '@/lib/hermes-runtime-bindings'
 import type { GatewaySession } from '@/lib/sessions'
 
 interface Setting {
@@ -28,6 +41,96 @@ interface ApiKeyInfo {
   source: string
   last_rotated_at: number | null
   last_rotated_by: string | null
+}
+
+interface HermesBootstrapSummary {
+  ready: boolean
+  blocking_checks: Array<{ code: string; message: string }>
+  recommended_next_steps: string[]
+  issue_count: number
+}
+
+interface HermesProviderReadiness {
+  configured: boolean
+  env_configured: boolean
+  config_configured: boolean
+  oauth?: {
+    nous?: boolean
+    openai_codex?: boolean
+  }
+}
+
+interface HermesDoctorSummary {
+  ok: boolean
+  issues_count: number
+  manual_issues_count: number
+  remaining_issues_count: number
+  fixed_count: number
+}
+
+interface HermesStatusPayload {
+  installed: boolean
+  cliAvailable?: boolean
+  gatewayRunning: boolean
+  hookInstalled: boolean
+  activeSessions: number
+  cronJobCount?: number
+  memoryEntries?: number
+  bootstrap?: HermesBootstrapSummary | null
+  providerReadiness?: HermesProviderReadiness | null
+  gateway?: {
+    runtime_state?: string | null
+    exit_reason?: string | null
+    session_count?: number | null
+  } | null
+  messagingPlatforms?: Array<{ name?: string; configured?: boolean }> | null
+  doctor?: {
+    summary?: HermesDoctorSummary | null
+    issues?: string[]
+    manualIssues?: string[]
+  } | null
+  routingBindings?: Record<string, string>
+  runtimeProfileBindings?: Record<string, string>
+  runtimeProfiles?: Array<{
+    name: string
+    label: string
+    description: string
+    hermesHome: string
+    exists: boolean
+  }>
+  runtimeBindingTargets?: Array<{
+    profile: string
+    profileLabel: string
+    profileBadge: string
+    runtimeProfileName: string
+    runtimeProfileLabel: string
+    runtimeProfileHome: string
+    runtimeProfileExists: boolean
+  }>
+  runtimeSplitActive?: boolean
+  routingSummary?: {
+    mode: 'shared_home'
+    profileLabel: string
+    routes: Array<{
+      id: string
+      label: string
+      kind: 'profile' | 'session_source' | 'platform' | 'gateway' | 'automation'
+      status: 'shared' | 'active' | 'configured' | 'inactive'
+      bindingKey?: string
+      count?: number
+      activeCount?: number
+      detail: string
+    }>
+    bindingTargets: Array<{
+      key: string
+      label: string
+      kind: 'session_source' | 'platform' | 'gateway' | 'automation'
+      status: 'active' | 'configured' | 'inactive'
+      profile: string
+      detail: string
+    }>
+    notes: string[]
+  } | null
 }
 
 interface CoordinatorTargetAgent {
@@ -84,6 +187,10 @@ const categoryLabels: Record<string, { label: string; icon: string; description:
 }
 
 const categoryOrder = ['general', 'security', 'profiles', 'retention', 'chat', 'gateway', 'custom']
+const HIDDEN_SETTING_KEYS = new Set([
+  HERMES_ROUTING_BINDINGS_SETTING_KEY,
+  HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY,
+])
 
 // Dropdown options for subscription plan settings
 const subscriptionDropdowns: Record<string, { label: string; value: string }[]> = {
@@ -136,16 +243,15 @@ export function SettingsPanel() {
   const [replayingOnboarding, setReplayingOnboarding] = useState(false)
 
   // Hermes integration state
-  const [hermesStatus, setHermesStatus] = useState<{
-    installed: boolean
-    gatewayRunning: boolean
-    hookInstalled: boolean
-    activeSessions: number
-    cronJobCount?: number
-    memoryEntries?: number
-  } | null>(null)
+  const [hermesStatus, setHermesStatus] = useState<HermesStatusPayload | null>(null)
   const [hermesLoading, setHermesLoading] = useState(false)
   const [hermesHookAction, setHermesHookAction] = useState(false)
+  const [showHermesSetup, setShowHermesSetup] = useState(false)
+  const [newHermesRuntimeProfileName, setNewHermesRuntimeProfileName] = useState('')
+  const [newHermesRuntimeProfileCloneMode, setNewHermesRuntimeProfileCloneMode] = useState<'blank' | 'clone'>('blank')
+  const [newHermesRuntimeCloneFromProfile, setNewHermesRuntimeCloneFromProfile] = useState('default')
+  const [creatingHermesRuntimeProfile, setCreatingHermesRuntimeProfile] = useState(false)
+  const [deletingHermesRuntimeProfileName, setDeletingHermesRuntimeProfileName] = useState<string | null>(null)
 
   // Backup state
   const [mcBackupRunning, setMcBackupRunning] = useState(false)
@@ -191,15 +297,18 @@ export function SettingsPanel() {
       const res = await fetch('/api/settings')
       if (res.status === 401) {
         window.location.assign('/login?next=%2Fsettings')
+        setLoading(false)
         return
       }
       if (res.status === 403) {
         setError('Admin access required')
+        setLoading(false)
         return
       }
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         setError(data.error || 'Failed to load settings')
+        setLoading(false)
         return
       }
       const data = await res.json()
@@ -208,8 +317,10 @@ export function SettingsPanel() {
       // Load hook profile from settings
       const hpSetting = (data.settings || []).find((s: Setting) => s.key === 'hook_profile')
       if (hpSetting) setHookProfile(hpSetting.value)
+      setLoading(false)
 
-      // Load agent options for coordinator routing dropdown
+      // Load coordinator preview context in the background so the panel doesn't
+      // stay blocked on large agent/session payloads.
       try {
         const agentsRes = await fetch('/api/agents?limit=200')
         if (agentsRes.ok) {
@@ -249,7 +360,6 @@ export function SettingsPanel() {
       }
     } catch {
       setError('Failed to load settings')
-    } finally {
       setLoading(false)
     }
   }, [])
@@ -353,6 +463,9 @@ export function SettingsPanel() {
         showFeedback(true, `Saved ${data.count} setting${data.count === 1 ? '' : 's'}`)
         setEdits({})
         fetchSettings()
+        if (Object.keys(changes).some((key) => key === HERMES_ROUTING_BINDINGS_SETTING_KEY || key === HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY)) {
+          fetchHermesStatus()
+        }
       } else {
         showFeedback(false, data.error || 'Failed to save')
       }
@@ -400,6 +513,134 @@ export function SettingsPanel() {
   }
 
   const categories = categoryOrder.filter(c => c === 'security' || c === 'profiles' || (grouped[c]?.length > 0))
+  const hermesConfiguredPlatforms = (hermesStatus?.messagingPlatforms || []).filter(platform => platform?.configured)
+  const hermesBlockingChecks = hermesStatus?.bootstrap?.blocking_checks || []
+  const hermesDoctorSummary = hermesStatus?.doctor?.summary || null
+  const hermesCliAvailable = hermesStatus?.cliAvailable !== false
+  const hermesRoutingRoutes = hermesStatus?.routingSummary?.routes || []
+  const hermesRoutingTargets = hermesStatus?.routingSummary?.bindingTargets || []
+  const hermesRuntimeProfiles = hermesStatus?.runtimeProfiles || []
+  const hermesRuntimeBindingTargets = hermesStatus?.runtimeBindingTargets || []
+  const hermesBindingsSetting = settings.find((setting) => setting.key === HERMES_ROUTING_BINDINGS_SETTING_KEY)
+  const hermesRuntimeBindingsSetting = settings.find((setting) => setting.key === HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY)
+  const currentHermesBindings = parseHermesRoutingBindings(
+    edits[HERMES_ROUTING_BINDINGS_SETTING_KEY] ?? hermesBindingsSetting?.value ?? stringifyHermesRoutingBindings(hermesStatus?.routingBindings || {}),
+  )
+  const currentHermesRuntimeBindings = parseHermesRuntimeProfileBindings(
+    edits[HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY]
+      ?? hermesRuntimeBindingsSetting?.value
+      ?? stringifyHermesRuntimeProfileBindings(hermesStatus?.runtimeProfileBindings || {}),
+  )
+  const availableHermesRuntimeProfiles = Array.from(new Map([
+    ...hermesRuntimeProfiles.map((profile) => [profile.name, profile] as const),
+    ...Object.values(currentHermesRuntimeBindings).map((name) => [name, {
+      name,
+      label: name,
+      description: `Configured runtime profile (${name})`,
+      hermesHome: '',
+      exists: false,
+    }] as const),
+  ]).values())
+  const cloneableHermesRuntimeProfiles = availableHermesRuntimeProfiles.filter((profile) => profile.exists)
+  const normalizedNewHermesRuntimeProfileName = newHermesRuntimeProfileName.trim().toLowerCase()
+  const newHermesRuntimeProfileNameIsValid = normalizedNewHermesRuntimeProfileName.length > 0
+    && /^[a-z0-9][a-z0-9-]*$/.test(normalizedNewHermesRuntimeProfileName)
+  const hermesRuntimeProfileNameAlreadyExists = availableHermesRuntimeProfiles.some(
+    (profile) => profile.name === normalizedNewHermesRuntimeProfileName,
+  )
+  const hermesRuntimeProfileUsage = HERMES_PROFILE_OPTIONS.reduce<Map<string, string[]>>((usage, option) => {
+    const runtimeProfileName = currentHermesRuntimeBindings[option.value] || 'default'
+    const entries = usage.get(runtimeProfileName) || []
+    entries.push(resolveHermesProfileLabel(option.value))
+    usage.set(runtimeProfileName, entries)
+    return usage
+  }, new Map())
+
+  const updateHermesBinding = (bindingKey: string, profileValue: string) => {
+    const nextBindings = { ...currentHermesBindings }
+    if (!profileValue || profileValue === 'primary') {
+      delete nextBindings[bindingKey]
+    } else {
+      nextBindings[bindingKey] = profileValue
+    }
+    handleEdit(HERMES_ROUTING_BINDINGS_SETTING_KEY, stringifyHermesRoutingBindings(nextBindings))
+  }
+
+  const updateHermesRuntimeBinding = (profileKey: string, runtimeProfileName: string) => {
+    const nextBindings = { ...currentHermesRuntimeBindings }
+    if (!runtimeProfileName || runtimeProfileName === 'default') {
+      delete nextBindings[profileKey]
+    } else {
+      nextBindings[profileKey] = runtimeProfileName
+    }
+    handleEdit(HERMES_RUNTIME_PROFILE_BINDINGS_SETTING_KEY, stringifyHermesRuntimeProfileBindings(nextBindings))
+  }
+
+  const handleCreateHermesRuntimeProfile = async () => {
+    if (!newHermesRuntimeProfileNameIsValid || hermesRuntimeProfileNameAlreadyExists || creatingHermesRuntimeProfile) return
+
+    setCreatingHermesRuntimeProfile(true)
+    try {
+      const res = await fetch('/api/hermes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create-profile',
+          profileName: normalizedNewHermesRuntimeProfileName,
+          cloneMode: newHermesRuntimeProfileCloneMode,
+          cloneFromProfileName: newHermesRuntimeProfileCloneMode === 'clone' ? newHermesRuntimeCloneFromProfile : undefined,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        showFeedback(true, `Created Hermes runtime profile "${normalizedNewHermesRuntimeProfileName}"`)
+        setNewHermesRuntimeProfileName('')
+        setNewHermesRuntimeProfileCloneMode('blank')
+        setNewHermesRuntimeCloneFromProfile('default')
+        await fetchHermesStatus()
+      } else {
+        showFeedback(false, data.error || data.output || 'Failed to create Hermes runtime profile')
+      }
+    } catch {
+      showFeedback(false, 'Network error')
+    } finally {
+      setCreatingHermesRuntimeProfile(false)
+    }
+  }
+
+  const handleDeleteHermesRuntimeProfile = async (profileName: string) => {
+    if (!profileName || deletingHermesRuntimeProfileName) return
+    const profileLabel = profileName === 'default' ? 'default' : `"${profileName}"`
+    if (!window.confirm(`Delete Hermes runtime profile ${profileLabel}? This removes that Hermes home and any profile-local config.`)) {
+      return
+    }
+
+    setDeletingHermesRuntimeProfileName(profileName)
+    try {
+      const res = await fetch('/api/hermes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete-profile',
+          profileName,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        showFeedback(true, `Deleted Hermes runtime profile "${profileName}"`)
+        if (newHermesRuntimeCloneFromProfile === profileName) {
+          setNewHermesRuntimeCloneFromProfile('default')
+        }
+        await fetchHermesStatus()
+      } else {
+        showFeedback(false, data.error || data.output || 'Failed to delete Hermes runtime profile')
+      }
+    } catch {
+      showFeedback(false, 'Network error')
+    } finally {
+      setDeletingHermesRuntimeProfileName(null)
+    }
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
@@ -594,9 +835,16 @@ export function SettingsPanel() {
                         {hermesStatus.memoryEntries} mem
                       </span>
                     )}
+                    {!hermesCliAvailable && (
+                      <span className="text-2xs px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300">
+                        CLI unavailable
+                      </span>
+                    )}
                   </div>
                   <p className="text-2xs text-muted-foreground mt-0.5">
-                    {hermesStatus.hookInstalled
+                    {!hermesCliAvailable
+                      ? 'Hermes home state is present, but this station cannot run the Hermes CLI yet.'
+                      : hermesStatus.hookInstalled
                       ? 'MC hook installed — receiving telemetry from hermes-agent'
                       : 'Install the MC hook for richer telemetry (agent status, session events)'}
                   </p>
@@ -636,6 +884,453 @@ export function SettingsPanel() {
                       : 'Install MC Hook'}
                 </Button>
               </div>
+
+              <div className="flex justify-end">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="text-2xs"
+                  onClick={() => setShowHermesSetup(true)}
+                >
+                  Configure Hermes
+                </Button>
+              </div>
+
+              <div className="grid gap-2 md:grid-cols-4">
+                <div className="rounded-md border border-border/30 bg-background/40 px-2.5 py-2">
+                  <p className="text-2xs text-muted-foreground">Bootstrap</p>
+                  <p className={`text-xs font-medium mt-1 ${!hermesCliAvailable ? 'text-blue-300' : hermesStatus.bootstrap?.ready ? 'text-green-400' : 'text-amber-400'}`}>
+                    {!hermesCliAvailable ? 'CLI unavailable' : hermesStatus.bootstrap?.ready ? 'Ready' : `${hermesBlockingChecks.length || hermesStatus.bootstrap?.issue_count || 0} blockers`}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border/30 bg-background/40 px-2.5 py-2">
+                  <p className="text-2xs text-muted-foreground">Provider</p>
+                  <p className={`text-xs font-medium mt-1 ${!hermesCliAvailable ? 'text-blue-300' : hermesStatus.providerReadiness?.configured ? 'text-green-400' : 'text-amber-400'}`}>
+                    {!hermesCliAvailable ? 'Check requires CLI' : hermesStatus.providerReadiness?.configured ? 'Configured' : 'Needs setup'}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border/30 bg-background/40 px-2.5 py-2">
+                  <p className="text-2xs text-muted-foreground">Channels</p>
+                  <p className="text-xs font-medium mt-1 text-foreground">
+                    {hermesConfiguredPlatforms.length > 0 ? `${hermesConfiguredPlatforms.length} configured` : 'None configured'}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border/30 bg-background/40 px-2.5 py-2">
+                  <p className="text-2xs text-muted-foreground">Doctor</p>
+                  <p className={`text-xs font-medium mt-1 ${!hermesCliAvailable ? 'text-blue-300' : hermesDoctorSummary?.ok ? 'text-green-400' : 'text-amber-400'}`}>
+                    {!hermesCliAvailable ? 'Check requires CLI' : hermesDoctorSummary?.ok ? 'Healthy' : `${hermesDoctorSummary?.remaining_issues_count ?? 0} open issues`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                <span className={`text-2xs px-1.5 py-0.5 rounded ${!hermesCliAvailable ? 'bg-muted text-muted-foreground' : hermesStatus.providerReadiness?.env_configured ? 'bg-green-500/15 text-green-400' : 'bg-amber-500/15 text-amber-300'}`}>
+                  {!hermesCliAvailable ? 'Env status unavailable' : hermesStatus.providerReadiness?.env_configured ? 'Env keys present' : 'Env keys missing'}
+                </span>
+                <span className={`text-2xs px-1.5 py-0.5 rounded ${!hermesCliAvailable ? 'bg-muted text-muted-foreground' : hermesStatus.providerReadiness?.oauth?.nous || hermesStatus.providerReadiness?.oauth?.openai_codex ? 'bg-green-500/15 text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                  {!hermesCliAvailable ? 'OAuth status unavailable' : hermesStatus.providerReadiness?.oauth?.nous || hermesStatus.providerReadiness?.oauth?.openai_codex ? 'OAuth ready' : 'OAuth not linked'}
+                </span>
+                <span className={`text-2xs px-1.5 py-0.5 rounded ${hermesStatus.gateway?.runtime_state === 'running' ? 'bg-green-500/15 text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                  Runtime: {hermesStatus.gateway?.runtime_state || 'unknown'}
+                </span>
+                {hermesStatus.gateway?.session_count != null && (
+                  <span className="text-2xs px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400">
+                    {hermesStatus.gateway.session_count} gateway sessions
+                  </span>
+                )}
+              </div>
+
+              {hermesRoutingRoutes.length > 0 && (
+                <div className="rounded-md border border-border/30 bg-background/30 px-3 py-2 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-2xs font-medium text-foreground">Routing summary</p>
+                      <p className="mt-0.5 text-2xs text-muted-foreground">
+                        {hermesStatus.runtimeSplitActive
+                          ? 'Hermes route intent and runtime homes are both configured. This shows where work enters Hermes and which real Hermes profile will execute it.'
+                          : 'Hermes is still operating in a shared-home runtime mode. This shows where work enters Hermes before routes are split across named Hermes profiles.'}
+                      </p>
+                    </div>
+                    <span className="text-2xs px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300">
+                      {hermesStatus.runtimeSplitActive ? 'Runtime split active' : 'Shared home'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {hermesRoutingRoutes.map((route) => {
+                      const currentRouteProfile = route.bindingKey
+                        ? (currentHermesBindings[route.bindingKey] || 'primary')
+                        : null
+                      const currentRouteLabel = currentRouteProfile
+                        ? resolveHermesProfileLabel(currentRouteProfile)
+                        : null
+
+                      return (
+                        <div
+                          key={route.id}
+                          className="rounded-md border border-border/20 bg-surface-1/40 px-2.5 py-2"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-foreground">{route.label}</p>
+                              <p className="mt-0.5 text-2xs text-muted-foreground">{route.detail}</p>
+                              {currentRouteLabel && (
+                                <p className="mt-1 text-2xs text-muted-foreground/70">Current binding: {currentRouteLabel}</p>
+                              )}
+                            </div>
+                            <span className={`shrink-0 text-2xs px-1.5 py-0.5 rounded ${
+                              route.status === 'active'
+                                ? 'bg-green-500/15 text-green-400'
+                                : route.status === 'configured' || route.status === 'shared'
+                                  ? 'bg-blue-500/15 text-blue-300'
+                                  : 'bg-muted text-muted-foreground'
+                            }`}>
+                              {route.status === 'shared'
+                                ? 'Shared'
+                                : route.status === 'active'
+                                  ? 'Active'
+                                  : route.status === 'configured'
+                                    ? 'Configured'
+                                    : 'Inactive'}
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {(hermesStatus.routingSummary?.notes || []).length > 0 && (
+                    <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-3 py-2">
+                      <ul className="space-y-1 text-2xs text-muted-foreground">
+                        {hermesStatus.routingSummary?.notes.map((note) => (
+                          <li key={note}>- {note}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {hermesRoutingTargets.length > 0 && (
+                <div className="rounded-md border border-border/30 bg-background/30 px-3 py-2 space-y-2">
+                  <div>
+                    <p className="text-2xs font-medium text-foreground">Persona bindings</p>
+                    <p className="mt-0.5 text-2xs text-muted-foreground">
+                      Choose which Hermes persona each ingress route should use. This controls the abstract intent layer before runtime profile selection.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    {hermesRoutingTargets.map((target) => {
+                      const selectedProfile = currentHermesBindings[target.key] || 'primary'
+                      const selectedLabel = resolveHermesProfileLabel(selectedProfile)
+                      return (
+                        <div
+                          key={target.key}
+                          className="rounded-md border border-border/20 bg-surface-1/40 px-2.5 py-2"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-medium text-foreground">{target.label}</p>
+                                <span className={`text-2xs px-1.5 py-0.5 rounded ${
+                                  target.status === 'active'
+                                    ? 'bg-green-500/15 text-green-400'
+                                    : target.status === 'configured'
+                                      ? 'bg-blue-500/15 text-blue-300'
+                                      : 'bg-muted text-muted-foreground'
+                                }`}>
+                                  {target.status === 'active' ? 'Active' : target.status === 'configured' ? 'Configured' : 'Inactive'}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 text-2xs text-muted-foreground">{target.detail}</p>
+                              <p className="mt-1 text-2xs text-muted-foreground/70">Current binding: {selectedLabel}</p>
+                            </div>
+                            <div className="shrink-0">
+                              <label className="sr-only" htmlFor={`hermes-binding-${target.key}`}>
+                                {target.label} profile
+                              </label>
+                              <select
+                                id={`hermes-binding-${target.key}`}
+                                aria-label={`${target.label} profile`}
+                                value={selectedProfile}
+                                onChange={(event) => updateHermesBinding(target.key, event.target.value)}
+                                className="w-52 px-2 py-1 text-sm bg-background border border-border rounded-md focus:border-primary focus:outline-none"
+                              >
+                                {HERMES_PROFILE_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {hermesRuntimeBindingTargets.length > 0 && (
+                <div className="rounded-md border border-border/30 bg-background/30 px-3 py-2 space-y-2">
+                  <div>
+                    <p className="text-2xs font-medium text-foreground">Runtime profile homes</p>
+                    <p className="mt-0.5 text-2xs text-muted-foreground">
+                      Map each Hermes persona onto a real Hermes runtime profile. This decides which <code>HERMES_HOME</code> Mission Control will read from and target for owned Hermes execution paths.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    {hermesRuntimeBindingTargets.map((target) => {
+                      const selectedRuntimeProfile = currentHermesRuntimeBindings[target.profile] || 'default'
+                      const selectedRuntime = availableHermesRuntimeProfiles.find((profile) => profile.name === selectedRuntimeProfile)
+                      const runtimeLabel = selectedRuntime?.label || selectedRuntimeProfile
+                      const runtimeDescription = selectedRuntime?.description || target.runtimeProfileHome
+                      return (
+                        <div
+                          key={target.profile}
+                          className="rounded-md border border-border/20 bg-surface-1/40 px-2.5 py-2"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-medium text-foreground">{target.profileLabel}</p>
+                                <span className={`text-2xs px-1.5 py-0.5 rounded ${
+                                  selectedRuntimeProfile === 'default'
+                                    ? 'bg-blue-500/15 text-blue-300'
+                                    : 'bg-green-500/15 text-green-400'
+                                }`}>
+                                  {selectedRuntimeProfile === 'default' ? 'Shared home' : 'Isolated runtime'}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 text-2xs text-muted-foreground">{runtimeDescription}</p>
+                              <p className="mt-1 text-2xs text-muted-foreground/70">Current runtime: {runtimeLabel}</p>
+                            </div>
+                            <div className="shrink-0">
+                              <label className="sr-only" htmlFor={`hermes-runtime-binding-${target.profile}`}>
+                                {target.profileLabel} runtime profile
+                              </label>
+                              <select
+                                id={`hermes-runtime-binding-${target.profile}`}
+                                aria-label={`${target.profileLabel} runtime profile`}
+                                value={selectedRuntimeProfile}
+                                onChange={(event) => updateHermesRuntimeBinding(target.profile, event.target.value)}
+                                className="w-56 px-2 py-1 text-sm bg-background border border-border rounded-md focus:border-primary focus:outline-none"
+                              >
+                                {availableHermesRuntimeProfiles.map((profile) => (
+                                  <option key={profile.name} value={profile.name}>
+                                    {profile.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-md border border-border/30 bg-background/30 px-3 py-2 space-y-3">
+                <div>
+                  <p className="text-2xs font-medium text-foreground">Manage runtime profiles</p>
+                  <p className="mt-0.5 text-2xs text-muted-foreground">
+                    Create or remove real Hermes runtime homes. Mission Control routes owned Hermes work into these named profiles when runtime split is enabled.
+                  </p>
+                </div>
+
+                <div className="rounded-md border border-border/20 bg-surface-1/40 px-2.5 py-2 space-y-2">
+                  <div className="grid gap-2 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+                    <div className="space-y-1">
+                      <label className="text-2xs font-medium text-foreground" htmlFor="new-hermes-runtime-profile-name">
+                        New runtime profile
+                      </label>
+                      <input
+                        id="new-hermes-runtime-profile-name"
+                        aria-label="New Hermes runtime profile name"
+                        value={newHermesRuntimeProfileName}
+                        onChange={(event) => setNewHermesRuntimeProfileName(event.target.value)}
+                        placeholder="researcher"
+                        className="w-full px-2 py-1.5 text-sm bg-background border border-border rounded-md focus:border-primary focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-2xs font-medium text-foreground" htmlFor="new-hermes-runtime-profile-template">
+                        Template
+                      </label>
+                      <select
+                        id="new-hermes-runtime-profile-template"
+                        aria-label="Hermes runtime profile template"
+                        value={newHermesRuntimeProfileCloneMode}
+                        onChange={(event) => setNewHermesRuntimeProfileCloneMode(event.target.value === 'clone' ? 'clone' : 'blank')}
+                        className="w-full px-2 py-1.5 text-sm bg-background border border-border rounded-md focus:border-primary focus:outline-none"
+                      >
+                        <option value="blank">Blank profile</option>
+                        <option value="clone">Clone existing profile</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-2xs font-medium text-foreground" htmlFor="new-hermes-runtime-profile-source">
+                        Clone from
+                      </label>
+                      <select
+                        id="new-hermes-runtime-profile-source"
+                        aria-label="Clone Hermes runtime profile from"
+                        value={newHermesRuntimeCloneFromProfile}
+                        onChange={(event) => setNewHermesRuntimeCloneFromProfile(event.target.value)}
+                        disabled={newHermesRuntimeProfileCloneMode !== 'clone'}
+                        className="w-full px-2 py-1.5 text-sm bg-background border border-border rounded-md focus:border-primary focus:outline-none disabled:opacity-60"
+                      >
+                        {cloneableHermesRuntimeProfiles.map((profile) => (
+                          <option key={profile.name} value={profile.name}>
+                            {profile.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex items-end">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="min-w-28"
+                        disabled={!hermesCliAvailable || !newHermesRuntimeProfileNameIsValid || hermesRuntimeProfileNameAlreadyExists || creatingHermesRuntimeProfile}
+                        onClick={handleCreateHermesRuntimeProfile}
+                      >
+                        {creatingHermesRuntimeProfile ? 'Creating...' : 'Create profile'}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <p className="text-2xs text-muted-foreground">
+                      Names use lowercase letters, numbers, and dashes. New homes will be created under <code>~/.hermes/profiles/&lt;name&gt;</code>.
+                    </p>
+                    {newHermesRuntimeProfileName.trim().length > 0 && !newHermesRuntimeProfileNameIsValid && (
+                      <p className="text-2xs text-amber-300">
+                        Runtime profile names must start with a letter or number and use only lowercase letters, numbers, or dashes.
+                      </p>
+                    )}
+                    {newHermesRuntimeProfileNameIsValid && hermesRuntimeProfileNameAlreadyExists && (
+                      <p className="text-2xs text-amber-300">
+                        Hermes runtime profile "{normalizedNewHermesRuntimeProfileName}" already exists.
+                      </p>
+                    )}
+                    {!hermesCliAvailable && (
+                      <p className="text-2xs text-blue-300">
+                        Creating and deleting Hermes runtime profiles requires a runnable <code>hermes</code> CLI on this station.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {availableHermesRuntimeProfiles.map((profile) => {
+                    const usage = hermesRuntimeProfileUsage.get(profile.name) || []
+                    const canDelete = hermesCliAvailable
+                      && profile.name !== 'default'
+                      && profile.exists
+                      && usage.length === 0
+
+                    return (
+                      <div
+                        key={profile.name}
+                        className="rounded-md border border-border/20 bg-surface-1/40 px-2.5 py-2"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs font-medium text-foreground">{profile.label}</p>
+                              <span className={`text-2xs px-1.5 py-0.5 rounded ${
+                                profile.name === 'default'
+                                  ? 'bg-blue-500/15 text-blue-300'
+                                  : profile.exists
+                                    ? 'bg-green-500/15 text-green-400'
+                                    : 'bg-amber-500/15 text-amber-300'
+                              }`}>
+                                {profile.name === 'default' ? 'Default home' : profile.exists ? 'Named runtime' : 'Missing home'}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-2xs text-muted-foreground">
+                              {profile.hermesHome || `Runtime binding target "${profile.name}" is configured but no Hermes home was found for it yet.`}
+                            </p>
+                            <p className="mt-1 text-2xs text-muted-foreground/70">
+                              {usage.length > 0
+                                ? `Used by: ${usage.join(', ')}`
+                                : profile.name === 'default'
+                                  ? 'Used as the fallback runtime for unbound personas.'
+                                  : profile.exists
+                                    ? 'Not currently bound to a Hermes persona.'
+                                    : 'Create this profile to restore a missing runtime binding target.'}
+                            </p>
+                          </div>
+                          <div className="shrink-0">
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              className="text-2xs"
+                              disabled={!canDelete || deletingHermesRuntimeProfileName === profile.name}
+                              onClick={() => handleDeleteHermesRuntimeProfile(profile.name)}
+                              aria-label={`Delete Hermes runtime profile ${profile.label}`}
+                            >
+                              {deletingHermesRuntimeProfileName === profile.name ? 'Deleting...' : 'Delete'}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {hermesBlockingChecks.length > 0 && (
+                <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+                  <p className="text-2xs font-medium text-amber-300">Setup blockers</p>
+                  <ul className="mt-1 space-y-1 text-2xs text-muted-foreground">
+                    {hermesBlockingChecks.slice(0, 3).map((check) => (
+                      <li key={check.code}>- {check.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {!hermesCliAvailable && (
+                <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-3 py-2">
+                  <p className="text-2xs font-medium text-blue-300">CLI required for health checks</p>
+                  <p className="mt-1 text-2xs text-muted-foreground">
+                    Mission Control can read Hermes state from <code>~/.hermes</code>, but provider readiness, bootstrap, and doctor checks need a runnable <code>hermes</code> binary on this station.
+                  </p>
+                </div>
+              )}
+
+              {(hermesStatus.bootstrap?.recommended_next_steps?.length || 0) > 0 && (
+                <div className="rounded-md border border-border/30 bg-background/30 px-3 py-2">
+                  <p className="text-2xs font-medium text-foreground">Recommended next steps</p>
+                  <ul className="mt-1 space-y-1 text-2xs text-muted-foreground">
+                    {hermesStatus.bootstrap?.recommended_next_steps.slice(0, 3).map((step) => (
+                      <li key={step}>- {step}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {(hermesStatus.doctor?.issues?.length || hermesStatus.doctor?.manualIssues?.length) ? (
+                <div className="rounded-md border border-border/30 bg-background/30 px-3 py-2">
+                  <p className="text-2xs font-medium text-foreground">Latest diagnostics</p>
+                  <ul className="mt-1 space-y-1 text-2xs text-muted-foreground">
+                    {(hermesStatus.doctor?.issues || []).slice(0, 2).map((issue) => (
+                      <li key={issue}>- {issue}</li>
+                    ))}
+                    {(hermesStatus.doctor?.manualIssues || []).slice(0, 1).map((issue) => (
+                      <li key={issue}>- Manual follow-up: {issue}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -648,6 +1343,18 @@ export function SettingsPanel() {
         }`}>
           {feedback.text}
         </div>
+      )}
+
+      {showHermesSetup && (
+        <RuntimeSetupModal
+          runtime="hermes"
+          onClose={() => setShowHermesSetup(false)}
+          onComplete={() => {
+            setShowHermesSetup(false)
+            fetchHermesStatus()
+            showFeedback(true, 'Hermes setup updated')
+          }}
+        />
       )}
 
       {/* Language */}
@@ -857,7 +1564,7 @@ export function SettingsPanel() {
 
       {/* Settings list for active category */}
       <div className="space-y-3">
-        {activeCategory !== 'security' && (grouped[activeCategory] || []).map(setting => {
+        {activeCategory !== 'security' && (grouped[activeCategory] || []).filter(setting => !HIDDEN_SETTING_KEYS.has(setting.key)).map(setting => {
           const currentValue = edits[setting.key] ?? setting.value
           const isChanged = edits[setting.key] !== undefined && edits[setting.key] !== setting.value
           const isBooleanish = setting.value === 'true' || setting.value === 'false'

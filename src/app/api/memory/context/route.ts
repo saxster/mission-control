@@ -1,68 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { existsSync } from 'fs'
-import { join } from 'path'
 import { requireRole } from '@/lib/auth'
 import { readLimiter } from '@/lib/rate-limit'
-import { generateContextPayload, ContextPayload } from '@/lib/memory-utils'
+import { generateContextPayload } from '@/lib/memory-utils'
 import { logger } from '@/lib/logger'
-import { MEMORY_PATH, MEMORY_ALLOWED_PREFIXES } from '@/lib/memory-path'
+import { getKnowledgeBaseContext } from '@/lib/knowledge-base'
+import {
+  decorateLegacyMemoryResponse,
+  legacyMemoryJson,
+  logLegacyMemoryRouteHit,
+} from '@/lib/legacy-memory-route'
 
-function mergeContextPayloads(payloads: ContextPayload[]): ContextPayload {
-  return {
-    fileTree: payloads.flatMap((p) => p.fileTree),
-    recentFiles: payloads
-      .flatMap((p) => p.recentFiles)
-      .sort((a, b) => b.modified - a.modified)
-      .slice(0, 10),
-    healthSummary: {
-      overall: payloads.some((p) => p.healthSummary.overall === 'critical')
-        ? 'critical'
-        : payloads.some((p) => p.healthSummary.overall === 'warning')
-          ? 'warning'
-          : 'healthy',
-      score: payloads.length > 0
-        ? Math.round(payloads.reduce((s, p) => s + p.healthSummary.score, 0) / payloads.length)
-        : 100,
-    },
-    maintenanceSignals: payloads.flatMap((p) => p.maintenanceSignals),
-  }
-}
+const LEGACY_ROUTE = { canonicalPath: '/api/knowledge-base/tree' } as const
 
-/**
- * Context injection endpoint — generates a payload for agent session start.
- * Returns workspace tree, recent files, health summary, and maintenance signals.
- */
 export async function GET(request: NextRequest) {
   const auth = requireRole(request, 'viewer')
-  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  if ('error' in auth) return legacyMemoryJson({ error: auth.error }, LEGACY_ROUTE, { status: auth.status })
 
   const limited = readLimiter(request)
-  if (limited) return limited
-
-  if (!MEMORY_PATH) {
-    return NextResponse.json({ error: 'Memory directory not configured' }, { status: 500 })
-  }
+  if (limited) return decorateLegacyMemoryResponse(limited, LEGACY_ROUTE)
 
   try {
-    if (MEMORY_ALLOWED_PREFIXES.length) {
-      const payloads: ContextPayload[] = []
-      for (const prefix of MEMORY_ALLOWED_PREFIXES) {
-        const folder = prefix.replace(/\/$/, '')
-        const fullPath = join(MEMORY_PATH, folder)
-        if (!existsSync(fullPath)) continue
-        payloads.push(await generateContextPayload(fullPath))
-      }
-      return NextResponse.json(
-        payloads.length > 0
-          ? mergeContextPayloads(payloads)
-          : await generateContextPayload(MEMORY_PATH)
-      )
+    const runtimeProfileName = request.nextUrl.searchParams.get('runtimeProfileName')
+    logLegacyMemoryRouteHit({
+      request,
+      user: auth.user,
+      runtimeProfileName,
+      action: 'context',
+      ...LEGACY_ROUTE,
+    })
+
+    const context = getKnowledgeBaseContext(runtimeProfileName)
+    if (!context.wikiExists) {
+      return legacyMemoryJson({
+        fileTree: [],
+        recentFiles: [],
+        healthSummary: { overall: 'warning', score: 0 },
+        maintenanceSignals: [],
+        initialized: false,
+        emptyStateMessage: context.firstRunReason,
+        runtimeProfileName: context.runtimeProfile.name,
+      }, LEGACY_ROUTE)
     }
 
-    const payload = await generateContextPayload(MEMORY_PATH)
-    return NextResponse.json(payload)
+    const payload = await generateContextPayload(context.wikiRoot)
+    return legacyMemoryJson({
+      ...payload,
+      initialized: true,
+      runtimeProfileName: context.runtimeProfile.name,
+    }, LEGACY_ROUTE)
   } catch (err) {
-    logger.error({ err }, 'Memory context API error')
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    logger.error({ err }, 'Legacy memory context API error')
+    return legacyMemoryJson({ error: 'Internal server error' }, LEGACY_ROUTE, { status: 500 })
   }
 }

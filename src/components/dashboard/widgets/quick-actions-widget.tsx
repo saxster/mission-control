@@ -120,9 +120,9 @@ function getContextualActions(data: DashboardData): Array<{
   })
 
   actions.push({
-    label: 'Memory',
-    desc: 'Knowledge + recall',
-    tab: 'memory',
+    label: 'Knowledge Base',
+    desc: 'Wiki + structured recall',
+    tab: 'knowledge-base',
     icon: <MemoryActionIcon />,
     priority: 10,
   })

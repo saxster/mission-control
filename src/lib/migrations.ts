@@ -1428,6 +1428,136 @@ const migrations: Migration[] = [
       db.exec(`ALTER TABLE mcp_call_log ADD COLUMN signature TEXT DEFAULT NULL`)
       db.exec(`ALTER TABLE mcp_call_log ADD COLUMN public_key TEXT DEFAULT NULL`)
     }
+  },
+  {
+    id: '049_evolution_runs',
+    up(db: Database.Database) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS evolution_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          target_type TEXT NOT NULL,
+          target_name TEXT NOT NULL,
+          baseline_fitness REAL,
+          evolved_fitness REAL,
+          improvement_pct REAL,
+          iterations INTEGER,
+          optimizer_model TEXT,
+          eval_model TEXT,
+          status TEXT NOT NULL DEFAULT 'running',
+          config TEXT,
+          lineage TEXT,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          completed_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_evolution_runs_target ON evolution_runs(target_type, target_name);
+        CREATE INDEX IF NOT EXISTS idx_evolution_runs_status ON evolution_runs(status);
+        CREATE INDEX IF NOT EXISTS idx_evolution_runs_created ON evolution_runs(created_at DESC);
+      `)
+    }
+  },
+  {
+    id: '050_local_session_index',
+    up(db: Database.Database) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS local_sessions (
+          entry_key TEXT PRIMARY KEY,
+          source_type TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          project_slug TEXT,
+          project_path TEXT,
+          model TEXT,
+          git_branch TEXT,
+          user_messages INTEGER NOT NULL DEFAULT 0,
+          assistant_messages INTEGER NOT NULL DEFAULT 0,
+          tool_uses INTEGER NOT NULL DEFAULT 0,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          total_tokens INTEGER NOT NULL DEFAULT 0,
+          estimated_cost REAL NOT NULL DEFAULT 0,
+          first_message_at TEXT,
+          last_message_at TEXT,
+          last_user_prompt TEXT,
+          session_source TEXT,
+          title TEXT,
+          profile TEXT,
+          profile_label TEXT,
+          runtime_profile_name TEXT,
+          runtime_profile_label TEXT,
+          is_active INTEGER NOT NULL DEFAULT 0,
+          last_indexed_at INTEGER NOT NULL,
+          is_stale INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_local_sessions_source ON local_sessions(source_type);
+        CREATE INDEX IF NOT EXISTS idx_local_sessions_activity ON local_sessions(last_message_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_local_sessions_active ON local_sessions(is_active) WHERE is_active = 1;
+
+        CREATE TABLE IF NOT EXISTS local_session_scan_state (
+          source_type TEXT PRIMARY KEY,
+          last_started_at INTEGER,
+          last_finished_at INTEGER,
+          last_indexed_at INTEGER,
+          status TEXT,
+          error_message TEXT
+        );
+      `)
+    }
+  },
+  {
+    id: '051_knowledge_base_source_reviews',
+    up(db: Database.Database) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS knowledge_base_source_reviews (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          runtime_profile_name TEXT NOT NULL,
+          path TEXT NOT NULL,
+          content_hash TEXT,
+          domain TEXT NOT NULL,
+          risk_level TEXT NOT NULL,
+          quality_score INTEGER NOT NULL,
+          quality_label TEXT NOT NULL,
+          review_status TEXT NOT NULL,
+          override_used INTEGER NOT NULL DEFAULT 0,
+          override_reason TEXT,
+          source_count INTEGER NOT NULL DEFAULT 0,
+          warnings_json TEXT,
+          sources_json TEXT,
+          actor TEXT NOT NULL,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_kb_source_reviews_path
+          ON knowledge_base_source_reviews(runtime_profile_name, path, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_kb_source_reviews_status
+          ON knowledge_base_source_reviews(review_status, created_at DESC);
+      `)
+    }
+  },
+  {
+    id: '052_knowledge_base_source_review_provenance',
+    up(db: Database.Database) {
+      const columns = db.prepare(`PRAGMA table_info(knowledge_base_source_reviews)`).all() as Array<{ name: string }>
+      const columnNames = new Set(columns.map((column) => column.name))
+
+      if (!columnNames.has('source_assessments_json')) {
+        db.exec('ALTER TABLE knowledge_base_source_reviews ADD COLUMN source_assessments_json TEXT')
+      }
+      if (!columnNames.has('verification_json')) {
+        db.exec('ALTER TABLE knowledge_base_source_reviews ADD COLUMN verification_json TEXT')
+      }
+      if (!columnNames.has('ingestion_method')) {
+        db.exec(`ALTER TABLE knowledge_base_source_reviews ADD COLUMN ingestion_method TEXT NOT NULL DEFAULT 'manual'`)
+      }
+
+      db.exec(`
+        UPDATE knowledge_base_source_reviews
+        SET ingestion_method = COALESCE(NULLIF(ingestion_method, ''), 'manual')
+        WHERE ingestion_method IS NULL OR ingestion_method = '';
+      `)
+    }
   }
 ]
 

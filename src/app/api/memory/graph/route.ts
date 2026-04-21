@@ -1,115 +1,77 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { existsSync, readdirSync, statSync } from 'fs'
-import path from 'path'
-import Database from 'better-sqlite3'
-import { config } from '@/lib/config'
 import { requireRole } from '@/lib/auth'
 import { readLimiter } from '@/lib/rate-limit'
+import { buildLinkGraph } from '@/lib/memory-utils'
+import { getKnowledgeBaseContext } from '@/lib/knowledge-base'
 import { logger } from '@/lib/logger'
+import {
+  decorateLegacyMemoryResponse,
+  legacyMemoryJson,
+  logLegacyMemoryRouteHit,
+} from '@/lib/legacy-memory-route'
 
-interface AgentFileInfo {
-  path: string
-  chunks: number
-  textSize: number
-}
-
-interface AgentGraphData {
-  name: string
-  dbSize: number
-  totalChunks: number
-  totalFiles: number
-  files: AgentFileInfo[]
-}
-
-const memoryDbDir = config.openclawStateDir
-  ? path.join(config.openclawStateDir, 'memory')
-  : ''
-
-function getAgentData(dbPath: string, agentName: string): AgentGraphData | null {
-  try {
-    const dbStat = statSync(dbPath)
-    const db = new Database(dbPath, { readonly: true, fileMustExist: true })
-
-    let files: AgentFileInfo[] = []
-    let totalChunks = 0
-    let totalFiles = 0
-
-    try {
-      // Check if chunks table exists
-      const tableCheck = db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='chunks'")
-        .get() as { name: string } | undefined
-
-      if (tableCheck) {
-        // Use COUNT only — skip SUM(LENGTH(text)) which forces a full data scan
-        const rows = db
-          .prepare(
-            'SELECT path, COUNT(*) as chunks FROM chunks GROUP BY path ORDER BY chunks DESC'
-          )
-          .all() as Array<{ path: string; chunks: number }>
-
-        files = rows.map((r) => ({
-          path: r.path || '(unknown)',
-          chunks: r.chunks,
-          textSize: 0,
-        }))
-
-        totalChunks = files.reduce((sum, f) => sum + f.chunks, 0)
-        totalFiles = files.length
-      }
-    } finally {
-      db.close()
-    }
-
-    return {
-      name: agentName,
-      dbSize: dbStat.size,
-      totalChunks,
-      totalFiles,
-      files,
-    }
-  } catch (err) {
-    logger.warn(`Failed to read memory DB for agent "${agentName}": ${err}`)
-    return null
-  }
-}
+const LEGACY_ROUTE = { canonicalPath: '/api/knowledge-base/graph' } as const
 
 export async function GET(request: NextRequest) {
   const auth = requireRole(request, 'viewer')
-  if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  if ('error' in auth) return legacyMemoryJson({ error: auth.error }, LEGACY_ROUTE, { status: auth.status })
 
   const limited = readLimiter(request)
-  if (limited) return limited
-
-  if (!memoryDbDir || !existsSync(memoryDbDir)) {
-    return NextResponse.json(
-      { error: 'Memory directory not available', agents: [] },
-      { status: 404 }
-    )
-  }
-
-  const agentFilter = request.nextUrl.searchParams.get('agent') || 'all'
+  if (limited) return decorateLegacyMemoryResponse(limited, LEGACY_ROUTE)
 
   try {
-    const entries = readdirSync(memoryDbDir).filter((f) => f.endsWith('.sqlite'))
-    const agents: AgentGraphData[] = []
+    const runtimeProfileName = request.nextUrl.searchParams.get('runtimeProfileName')
+    logLegacyMemoryRouteHit({
+      request,
+      user: auth.user,
+      runtimeProfileName,
+      action: 'graph',
+      ...LEGACY_ROUTE,
+    })
 
-    for (const entry of entries) {
-      const agentName = entry.replace('.sqlite', '')
-
-      if (agentFilter !== 'all' && agentName !== agentFilter) continue
-
-      const dbPath = path.join(memoryDbDir, entry)
-      const data = getAgentData(dbPath, agentName)
-      if (data) agents.push(data)
+    const context = getKnowledgeBaseContext(runtimeProfileName)
+    if (!context.wikiExists) {
+      return legacyMemoryJson({
+        agents: [],
+        nodes: [],
+        edges: [],
+        totalFiles: 0,
+        totalLinks: 0,
+        initialized: false,
+        emptyStateMessage: context.firstRunReason,
+        runtimeProfileName: context.runtimeProfile.name,
+      }, LEGACY_ROUTE)
     }
 
-    // Sort by total chunks descending
-    agents.sort((a, b) => b.totalChunks - a.totalChunks)
+    const graph = await buildLinkGraph(context.wikiRoot)
+    const nodes = Object.values(graph.nodes).map((node) => ({
+      id: node.path,
+      path: node.path,
+      name: node.name.replace(/\.[^.]+$/, ''),
+      pageType: node.path.split('/')[0] || 'root',
+      outgoingCount: node.outgoing.length,
+      incomingCount: node.incoming.length,
+      linkCount: node.outgoing.length + node.incoming.length,
+      hasSchema: node.schema !== null,
+    }))
+    const edges = Object.values(graph.nodes).flatMap((node) => node.outgoing.map((target) => ({
+      id: `${node.path}=>${target}`,
+      source: node.path,
+      target,
+    })))
 
-    return NextResponse.json({ agents })
+    return legacyMemoryJson({
+      agents: [],
+      nodes,
+      edges,
+      totalFiles: graph.totalFiles,
+      totalLinks: graph.totalLinks,
+      orphans: graph.orphans,
+      initialized: true,
+      runtimeProfileName: context.runtimeProfile.name,
+    }, LEGACY_ROUTE)
   } catch (err) {
-    logger.error(`Failed to build memory graph data: ${err}`)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    logger.error({ err }, 'Legacy memory graph API error')
+    return legacyMemoryJson({ error: 'Internal server error' }, LEGACY_ROUTE, { status: 500 })
   }
 }

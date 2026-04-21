@@ -1,16 +1,19 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { Loader } from '@/components/ui/loader'
-import { useMissionControl } from '@/store'
+import type { LogEntry } from '@/store'
+import { useMissionControlLogViewerState } from '@/store/selectors'
 import { useSmartPoll } from '@/lib/use-smart-poll'
 import { createClientLogger } from '@/lib/client-logger'
 
 const log = createClientLogger('LogViewer')
 
 const MAX_LOG_BUFFER = 1000
+const LOG_VIEWER_REFRESH_WINDOW_MS = 30_000
+const INITIAL_VISIBLE_LOGS = 80
 
 interface LogFilters {
   level?: string
@@ -29,17 +32,33 @@ function downloadFile(content: string, filename: string, mime: string) {
   URL.revokeObjectURL(url)
 }
 
-export function LogViewerPanel() {
+export function LogViewerPanel({ active = true }: { active?: boolean }) {
   const t = useTranslations('logViewer')
-  const { logs, logFilters, setLogFilters, clearLogs, addLog } = useMissionControl()
+  const {
+    logs,
+    logFilters,
+    replaceLogs,
+    prependLogs,
+    setLogFilters,
+    clearLogs,
+    logViewerCache,
+    setLogViewerCache,
+  } = useMissionControlLogViewerState()
   const [isAutoScroll, setIsAutoScroll] = useState(true)
-  const [availableSources, setAvailableSources] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [logFilePath, setLogFilePath] = useState<string | null>(null)
+  const [visibleLogCount, setVisibleLogCount] = useState(INITIAL_VISIBLE_LOGS)
   const logContainerRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef<boolean>(true)
   const logsRef = useRef(logs)
   const logFiltersRef = useRef(logFilters)
+  const refreshTimeoutRef = useRef<number | null>(null)
+  const deferredRenderFrameRef = useRef<number | null>(null)
+  const {
+    availableSources,
+    logFilePath,
+    hasLoadedInitialData,
+    lastLoadedAt,
+  } = logViewerCache
 
   const isBufferFull = logs.length >= MAX_LOG_BUFFER
 
@@ -57,12 +76,12 @@ export function LogViewerPanel() {
     logFiltersRef.current = logFilters
   }, [logFilters])
 
-  const loadLogs = useCallback(async (tail = false) => {
+  const loadLogs = useCallback(async (tail = false, filtersOverride?: LogFilters, background = false) => {
     log.debug(`Loading logs (tail=${tail})`)
-    setIsLoading(!tail) // Only show loading for initial load, not for tailing
+    setIsLoading(!tail && !background) // Only show loading for cold-style loads
 
     try {
-      const currentFilters = logFiltersRef.current
+      const currentFilters = filtersOverride ?? logFiltersRef.current
       const currentLogs = logsRef.current
 
       const params = new URLSearchParams({
@@ -83,43 +102,41 @@ export function LogViewerPanel() {
 
       if (data.logs && data.logs.length > 0) {
         if (tail) {
-          // Add new logs for tail mode - prepend to existing logs
-          let newLogsAdded = 0
-          const existingIds = new Set((currentLogs || []).map((l: any) => l?.id).filter(Boolean))
-          data.logs.reverse().forEach((entry: any) => {
-            if (existingIds.has(entry?.id)) return
-            addLog(entry)
-            newLogsAdded++
-          })
-          log.debug(`Added ${newLogsAdded} new logs (tail mode)`)
+          const existingIds = new Set((currentLogs || []).map((entry) => entry?.id).filter(Boolean))
+          const newEntries = (data.logs as LogEntry[]).filter((entry) => !existingIds.has(entry?.id))
+          prependLogs(newEntries)
+          log.debug(`Added ${newEntries.length} new logs (tail mode)`)
         } else {
-          // Replace logs for initial load or refresh
-          log.debug(`Clearing existing logs and loading ${data.logs.length} logs`)
-          clearLogs() // Clear existing logs
-          data.logs.reverse().forEach((entry: any) => {
-            addLog(entry)
-          })
-          log.debug(`Successfully added ${data.logs.length} logs to store`)
+          log.debug(`Replacing logs with ${data.logs.length} entries`)
+          replaceLogs(data.logs as LogEntry[])
         }
       } else {
         log.debug('No logs received from API')
+        if (!tail) {
+          setLogViewerCache({
+            hasLoadedInitialData: true,
+            lastLoadedAt: Date.now(),
+          })
+        }
       }
     } catch (error) {
       log.error('Failed to load logs:', error)
     } finally {
-      setIsLoading(false)
+      if (!background) {
+        setIsLoading(false)
+      }
     }
-  }, [addLog, clearLogs])
+  }, [prependLogs, replaceLogs, setLogViewerCache])
 
   const loadSources = useCallback(async () => {
     try {
       const response = await fetch('/api/logs?action=sources')
       const data = await response.json()
-      setAvailableSources(data.sources || [])
+      setLogViewerCache({ availableSources: data.sources || [] })
     } catch (error) {
       log.error('Failed to load log sources:', error)
     }
-  }, [])
+  }, [setLogViewerCache])
 
   // Try to fetch log file path from gateway status
   const loadLogFilePath = useCallback(async () => {
@@ -127,40 +144,74 @@ export function LogViewerPanel() {
       const response = await fetch('/api/status')
       const data = await response.json()
       const path = data?.config?.logFile || data?.logFile || null
-      setLogFilePath(path)
+      setLogViewerCache({ logFilePath: path })
     } catch {
       // Gateway may not expose this — silently ignore
     }
-  }, [])
+  }, [setLogViewerCache])
 
-  // Load initial logs and sources
   useEffect(() => {
+    if (!active) return
+
     log.debug('Initial load started')
-    loadLogs()
-    loadSources()
-    loadLogFilePath()
-  }, [loadLogs, loadSources, loadLogFilePath])
+    if (!hasLoadedInitialData) {
+      void loadLogs(false)
+      if (availableSources.length === 0) {
+        void loadSources()
+      }
+      if (!logFilePath) {
+        void loadLogFilePath()
+      }
+      return
+    }
+
+    if (availableSources.length === 0) {
+      void loadSources()
+    }
+    if (!logFilePath) {
+      void loadLogFilePath()
+    }
+
+    const isFresh = typeof lastLoadedAt === 'number' && (Date.now() - lastLoadedAt) < LOG_VIEWER_REFRESH_WINDOW_MS
+    if (!isFresh) {
+      refreshTimeoutRef.current = window.setTimeout(() => {
+        void loadLogs(true, undefined, true)
+      }, 0)
+    }
+
+    return () => {
+      if (refreshTimeoutRef.current !== null) {
+        window.clearTimeout(refreshTimeoutRef.current)
+        refreshTimeoutRef.current = null
+      }
+    }
+  }, [active, availableSources.length, hasLoadedInitialData, lastLoadedAt, loadLogFilePath, loadLogs, loadSources, logFilePath])
 
   // Smart polling for log tailing (10s, visibility-aware, logs mostly come via WS)
   const pollLogs = useCallback(() => {
     if (autoScrollRef.current && !isLoading) {
-      loadLogs(true) // tail mode
+      void loadLogs(true) // tail mode
     }
   }, [isLoading, loadLogs])
 
-  useSmartPoll(pollLogs, 30000, { pauseWhenConnected: true })
+  useSmartPoll(pollLogs, 30000, {
+    pauseWhenConnected: true,
+    fireImmediately: false,
+    enabled: active,
+  })
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
+    if (!active) return
     if (isAutoScroll && logContainerRef.current) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight
     }
-  }, [logs, isAutoScroll])
+  }, [active, logs, isAutoScroll])
 
   const handleFilterChange = (newFilters: Partial<LogFilters>) => {
+    const nextFilters = { ...logFiltersRef.current, ...newFilters }
     setLogFilters(newFilters)
-    // Reload logs with new filters
-    setTimeout(() => loadLogs(), 100)
+    void loadLogs(false, nextFilters)
   }
 
   const handleScrollToBottom = () => {
@@ -189,13 +240,44 @@ export function LogViewerPanel() {
     }
   }
 
-  const filteredLogs = logs.filter(entry => {
+  const filteredLogs = useMemo(() => logs.filter(entry => {
     if (logFilters.level && entry.level !== logFilters.level) return false
     if (logFilters.source && entry.source !== logFilters.source) return false
     if (logFilters.search && !entry.message.toLowerCase().includes(logFilters.search.toLowerCase())) return false
     if (logFilters.session && (!entry.session || !entry.session.includes(logFilters.session))) return false
     return true
-  })
+  }), [logs, logFilters])
+
+  useEffect(() => {
+    if (deferredRenderFrameRef.current !== null) {
+      window.cancelAnimationFrame(deferredRenderFrameRef.current)
+      deferredRenderFrameRef.current = null
+    }
+
+    const nextVisibleCount = Math.min(filteredLogs.length, INITIAL_VISIBLE_LOGS)
+    setVisibleLogCount(nextVisibleCount)
+
+    if (filteredLogs.length > nextVisibleCount) {
+      deferredRenderFrameRef.current = window.requestAnimationFrame(() => {
+        deferredRenderFrameRef.current = window.requestAnimationFrame(() => {
+          setVisibleLogCount(filteredLogs.length)
+          deferredRenderFrameRef.current = null
+        })
+      })
+    }
+
+    return () => {
+      if (deferredRenderFrameRef.current !== null) {
+        window.cancelAnimationFrame(deferredRenderFrameRef.current)
+        deferredRenderFrameRef.current = null
+      }
+    }
+  }, [filteredLogs])
+
+  const visibleLogs = useMemo(
+    () => filteredLogs.slice(0, visibleLogCount),
+    [filteredLogs, visibleLogCount]
+  )
 
   const handleExportText = useCallback(() => {
     const lines = filteredLogs.map(entry => {
@@ -363,10 +445,11 @@ export function LogViewerPanel() {
               {t('noLogs')}
             </div>
           ) : (
-            filteredLogs.map((log) => (
+            visibleLogs.map((log) => (
               <div 
                 key={log.id} 
                 className={`border-l-4 pl-4 py-2 rounded-r-md ${getLogLevelBg(log.level)}`}
+                style={{ contentVisibility: 'auto', containIntrinsicSize: '72px' }}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">

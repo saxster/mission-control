@@ -3,7 +3,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
+import { HermesRouteBindingControl } from '@/components/hermes/hermes-route-binding-control'
 import { useMissionControl } from '@/store'
+import { resolveHermesProfileValue, resolveHermesSourceLabel } from '@/lib/hermes-routing'
+import { useHermesRouteBindings } from '@/lib/use-hermes-route-bindings'
 import { useSmartPoll } from '@/lib/use-smart-poll'
 
 interface AgentActivity {
@@ -35,6 +38,7 @@ const typeColors: Record<string, string> = {
   task_deleted: 'text-red-400',
   comment_added: 'text-purple-400',
   agent_created: 'text-cyan-400',
+  hermes_session_started: 'text-emerald-400',
   standup_generated: 'text-orange-400',
   mention: 'text-pink-400',
   assignment: 'text-indigo-400',
@@ -47,14 +51,84 @@ const typeIcons: Record<string, string> = {
   task_deleted: 'x',
   comment_added: '#',
   agent_created: '@',
+  hermes_session_started: 'H',
   standup_generated: '!',
   mention: '>',
   assignment: '=',
 }
 
+function getHermesBindingDetails(activity: AgentActivity, bindings: Record<string, string>) {
+  if (activity.type !== 'hermes_session_started') return null
+  const source = typeof activity.data?.source === 'string' ? activity.data.source : ''
+  if (!source) return null
+  const sourceKey = source.trim().toLowerCase() || 'cli'
+  return {
+    sourceKey,
+    sourceLabel: typeof activity.data?.sourceLabel === 'string'
+      ? activity.data.sourceLabel
+      : resolveHermesSourceLabel(sourceKey),
+    profile: resolveHermesProfileValue(
+      typeof bindings[sourceKey] === 'string'
+        ? bindings[sourceKey]
+        : typeof activity.data?.profile === 'string'
+          ? activity.data.profile
+          : 'primary',
+    ),
+  }
+}
+
+function AgentHistoryEventRow({
+  activity,
+  hermesBindings,
+  onUpdateHermesBinding,
+}: {
+  activity: AgentActivity
+  hermesBindings: Record<string, string>
+  onUpdateHermesBinding: (payload: { source: string; profile: string }) => Promise<void>
+}) {
+  const hermesBinding = getHermesBindingDetails(activity, hermesBindings)
+
+  return (
+    <div className="flex items-start gap-2.5 pl-3 py-1.5 hover:bg-secondary/30 rounded-r-lg transition-smooth relative">
+      <span className={`absolute -left-[5px] top-3 w-2 h-2 rounded-full bg-card border-2 ${
+        activity.type === 'agent_status_change' ? 'border-yellow-400' :
+        activity.type.startsWith('task') ? 'border-blue-400' :
+        'border-muted-foreground'
+      }`} />
+
+      <span className={`w-5 h-5 rounded bg-secondary flex items-center justify-center text-2xs font-mono font-bold shrink-0 ${typeColors[activity.type] || 'text-muted-foreground'}`}>
+        {typeIcons[activity.type] || '?'}
+      </span>
+
+      <div className="flex-1 min-w-0">
+        <p className="text-xs text-foreground">{activity.description}</p>
+        {activity.entity && activity.entity.title && (
+          <p className="text-2xs text-muted-foreground mt-0.5 truncate">
+            {activity.entity.type === 'task' ? `Task: ${activity.entity.title}` : activity.entity.title}
+          </p>
+        )}
+        {hermesBinding && (
+          <HermesRouteBindingControl
+            source={hermesBinding.sourceKey}
+            sourceLabel={hermesBinding.sourceLabel}
+            profile={hermesBinding.profile}
+            onChange={onUpdateHermesBinding}
+            compact
+          />
+        )}
+      </div>
+
+      <span className="text-2xs text-muted-foreground font-mono-tight shrink-0">
+        {new Date(activity.created_at * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+      </span>
+    </div>
+  )
+}
+
 export function AgentHistoryPanel() {
   const t = useTranslations('agentHistory')
   const { agents } = useMissionControl()
+  const { bindings: hermesBindings, updateBinding: updateHermesBinding } = useHermesRouteBindings()
   const [selectedAgent, setSelectedAgent] = useState<string>('')
   const [activities, setActivities] = useState<AgentActivity[]>([])
   const [sessions, setSessions] = useState<SessionInfo[]>([])
@@ -273,34 +347,14 @@ export function AgentHistoryPanel() {
                     </div>
                     <div className="space-y-1 pl-2 border-l-2 border-border/50">
                       {dayActivities.map(act => (
-                        <div key={act.id} className="flex items-start gap-2.5 pl-3 py-1.5 hover:bg-secondary/30 rounded-r-lg transition-smooth relative">
-                          {/* Timeline dot */}
-                          <span className={`absolute -left-[5px] top-3 w-2 h-2 rounded-full bg-card border-2 ${
-                            act.type === 'agent_status_change' ? 'border-yellow-400' :
-                            act.type.startsWith('task') ? 'border-blue-400' :
-                            'border-muted-foreground'
-                          }`} />
-
-                          {/* Icon */}
-                          <span className={`w-5 h-5 rounded bg-secondary flex items-center justify-center text-2xs font-mono font-bold shrink-0 ${typeColors[act.type] || 'text-muted-foreground'}`}>
-                            {typeIcons[act.type] || '?'}
-                          </span>
-
-                          {/* Content */}
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs text-foreground">{act.description}</p>
-                            {act.entity && act.entity.title && (
-                              <p className="text-2xs text-muted-foreground mt-0.5 truncate">
-                                {act.entity.type === 'task' ? `Task: ${act.entity.title}` : act.entity.title}
-                              </p>
-                            )}
-                          </div>
-
-                          {/* Time */}
-                          <span className="text-2xs text-muted-foreground font-mono-tight shrink-0">
-                            {new Date(act.created_at * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
+                        <AgentHistoryEventRow
+                          key={act.id}
+                          activity={act}
+                          hermesBindings={hermesBindings}
+                          onUpdateHermesBinding={async (payload) => {
+                            await updateHermesBinding(payload)
+                          }}
+                        />
                       ))}
                     </div>
                   </div>

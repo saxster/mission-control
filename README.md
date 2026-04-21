@@ -217,11 +217,21 @@ Kanban board with six columns (inbox → assigned → in progress → review →
 
 ![Mission Control Tasks Panel](docs/mission-control-tasks.png)
 
-### Memory Knowledge Graph
+### Knowledge Base
 
-Explore agent knowledge through the Memory Browser, filesystem-backed memory tree, and interactive relationship graph for sessions, memory chunks, and linked knowledge files.
+Explore the Hermes wiki, structured knowledge, and agent memory from a single Knowledge Base surface with wiki editing, backlinks, health checks, and a wiki-link graph.
 
-![Mission Control Memory Panel](docs/mission-control-memory.png)
+For API consumers, `/api/knowledge-base/*` is the canonical interface. The older `/api/memory/*` routes remain temporarily as deprecated compatibility shims for existing automation and MCP tooling.
+
+The Knowledge Base now applies source-governance guardrails on write and retrieval: high-risk domains can trigger live URL verification, low-confidence or overridden pages stay labeled, search de-prioritizes weaker evidence, and operators can work through a governance review queue with explicit backfill for older pages.
+
+![Mission Control Knowledge Base Panel](docs/mission-control-memory.png)
+
+### Obsidian Integration
+
+Mission Control now exposes a dedicated Obsidian surface at `/obsidian` alongside the Knowledge Base. It tracks the configured vault path, managed Hermes root, plugin heartbeat, sync checkpoints, import candidates, conflicts, attachment refs, and Canvas refs using the Hermes `state.db` sync tables.
+
+The new `/api/obsidian/*` endpoints support plugin heartbeats, vault scans, conflict review, and external-note imports. If you want the desktop plugin to call these APIs without a browser session, set `OBSIDIAN_PLUGIN_TOKEN` in Mission Control and use the same bearer token in the plugin settings.
 
 ### Skills Hub
 
@@ -374,7 +384,7 @@ See [`.env.example`](.env.example) for the complete list. Key variables:
 | `MC_ALLOWED_HOSTS` | No | Host allowlist for production |
 | `NEXT_PUBLIC_GATEWAY_OPTIONAL` | No | Run without gateway connection |
 
-*Required for memory browser, log viewer, and gateway features.
+*Required for Knowledge Base, log viewer, and gateway features.
 
 ---
 
@@ -386,6 +396,8 @@ pnpm build            # Production build
 pnpm typecheck        # TypeScript check
 pnpm lint             # ESLint
 pnpm test             # Vitest unit tests (282)
+pnpm test:hermes      # Focused Hermes unit/regression bundle
+pnpm test:hermes:full # Hermes unit bundle + operator-path Playwright check
 pnpm test:e2e         # Playwright E2E (295)
 pnpm quality:gate     # All checks
 ```

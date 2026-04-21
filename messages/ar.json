@@ -85,6 +85,7 @@
     "channels": "القنوات",
     "skills": "المهارات",
     "memory": "الذاكرة",
+    "knowledgeBase": "قاعدة المعرفة",
     "activity": "النشاط",
     "logs": "السجلات",
     "costTracker": "تتبع التكاليف",
@@ -155,6 +156,7 @@
     "loadingActiveSessions": "جارٍ تحميل الجلسات النشطة",
     "hydratingWorkspaceBoard": "جارٍ تهيئة لوحة مساحة العمل",
     "mappingMemoryGraph": "جارٍ رسم خريطة الذاكرة",
+    "mappingKnowledgeBaseGraph": "جارٍ رسم خريطة المعرفة",
     "indexingSkillCatalog": "جارٍ فهرسة كتالوج المهارات"
   },
   "header": {
@@ -191,7 +193,7 @@
     "goToNotifications": "الانتقال إلى الإشعارات",
     "goToTokenUsage": "الانتقال إلى استخدام الرموز",
     "goToLogs": "الانتقال إلى السجلات",
-    "goToMemoryBrowser": "الانتقال إلى متصفح الذاكرة",
+    "goToKnowledgeBase": "الانتقال إلى قاعدة المعرفة",
     "goToIntegrations": "الانتقال إلى التكاملات",
     "goToSettings": "الانتقال إلى الإعدادات",
     "goToGateways": "الانتقال إلى البوابات",

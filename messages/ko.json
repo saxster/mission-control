@@ -85,6 +85,7 @@
     "channels": "채널",
     "skills": "스킬",
     "memory": "메모리",
+    "knowledgeBase": "지식 베이스",
     "activity": "활동",
     "logs": "로그",
     "costTracker": "비용 추적",
@@ -155,6 +156,7 @@
     "loadingActiveSessions": "활성 세션 로딩 중",
     "hydratingWorkspaceBoard": "워크스페이스 보드 초기화 중",
     "mappingMemoryGraph": "메모리 그래프 매핑 중",
+    "mappingKnowledgeBaseGraph": "지식 그래프 매핑 중",
     "indexingSkillCatalog": "스킬 카탈로그 인덱싱 중"
   },
   "header": {
@@ -191,7 +193,7 @@
     "goToNotifications": "알림으로 이동",
     "goToTokenUsage": "토큰 사용량으로 이동",
     "goToLogs": "로그로 이동",
-    "goToMemoryBrowser": "메모리 브라우저로 이동",
+    "goToKnowledgeBase": "지식 베이스로 이동",
     "goToIntegrations": "통합으로 이동",
     "goToSettings": "설정으로 이동",
     "goToGateways": "게이트웨이로 이동",

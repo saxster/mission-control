@@ -2,7 +2,8 @@
 
 import Image from 'next/image'
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { useMissionControl, type ChatAttachment } from '@/store'
+import { type ChatAttachment } from '@/store'
+import { useMissionControlChatInputState } from '@/store/selectors'
 import { Button } from '@/components/ui/button'
 
 interface ChatInputProps {
@@ -14,7 +15,7 @@ interface ChatInputProps {
 }
 
 export function ChatInput({ onSend, onAbort, disabled, agents = [], isGenerating }: ChatInputProps) {
-  const { chatInput, setChatInput, isSendingMessage } = useMissionControl()
+  const { chatInput, setChatInput, isSendingMessage } = useMissionControlChatInputState()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [showMentions, setShowMentions] = useState(false)

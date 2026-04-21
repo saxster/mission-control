@@ -536,7 +536,7 @@ export function MemoryTab({
       <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
         <strong className="text-blue-200">{t('memoryBannerTitle')}</strong>{' '}
         {t('memoryBannerDesc')}{' '}
-        <Link href="/memory" className="text-blue-400 underline hover:text-blue-300">{t('memoryBrowserLink')}</Link> {t('memoryBannerPage')}
+        <Link href="/knowledge-base" className="text-blue-400 underline hover:text-blue-300">{t('memoryBrowserLink')}</Link> {t('memoryBannerPage')}
       </div>
 
       {/* Memory Content */}
@@ -747,6 +747,7 @@ export function ActivityTab({ agent }: { agent: Agent }) {
       case 'task_created': return '+'
       case 'task_updated': return '>'
       case 'comment_added': return '#'
+      case 'hermes_session_started': return 'H'
       case 'agent_heartbeat': return '*'
       case 'agent_soul_updated': return '@'
       case 'agent_memory_updated': return '='

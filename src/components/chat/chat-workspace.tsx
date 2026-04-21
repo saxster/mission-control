@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useCallback, useState, useRef } from 'react'
-import { useMissionControl, type Conversation, type ChatAttachment } from '@/store'
+import { type Conversation, type ChatAttachment } from '@/store'
+import { useMissionControlChatWorkspaceState } from '@/store/selectors'
 import { useSmartPoll } from '@/lib/use-smart-poll'
 import { createClientLogger } from '@/lib/client-logger'
 import { ConversationList } from './conversation-list'
@@ -12,6 +13,14 @@ import { SessionMessage, shouldShowTimestamp, type SessionTranscriptMessage } fr
 import { getSessionKindLabel, SessionKindAvatar } from './session-kind-brand'
 import { TerminalView } from '@/components/terminal/terminal-view'
 import { SplitPaneLayout, type SplitPane } from '@/components/terminal/split-pane-layout'
+import {
+  HERMES_PROFILE_OPTIONS,
+  resolveHermesProfileBadgeLabel,
+  resolveHermesProfileLabel,
+  resolveHermesProfileValue,
+  resolveHermesSourceLabel,
+} from '@/lib/hermes-routing'
+import { useHermesRouteBindings } from '@/lib/use-hermes-route-bindings'
 
 const log = createClientLogger('ChatWorkspace')
 
@@ -43,7 +52,8 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
     addSplitPane,
     removeSplitPane,
     clearSplitPanes,
-  } = useMissionControl()
+  } = useMissionControlChatWorkspaceState()
+  const { updateBinding: updateHermesRouteBinding } = useHermesRouteBindings()
 
   const pendingIdRef = useRef(-1)
 
@@ -229,6 +239,15 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
     !!activeConversation &&
     !activeConversation.startsWith('session:')
 
+  const selectedHermesProfileLabel =
+    selectedSession?.sessionKind === 'hermes' ? selectedSession.profileLabel || null : null
+  const selectedHermesRuntimeProfileLabel =
+    selectedSession?.sessionKind === 'hermes' ? selectedSession.runtimeProfileLabel || null : null
+  const selectedHermesSourceLabel =
+    selectedSession?.sessionKind === 'hermes'
+      ? resolveHermesSourceLabel(selectedSession.source || 'cli')
+      : null
+
   useEffect(() => {
     const sessionMeta = selectedSession
     if (!sessionMeta) {
@@ -313,6 +332,34 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
       })
     )
   }, [activeConversation, conversations, setConversations])
+
+  const handleUpdateHermesBinding = useCallback(async (payload: {
+    source: string
+    profile: string
+  }) => {
+    const sourceKey = String(payload.source || '').trim().toLowerCase() || 'cli'
+    const nextProfile = resolveHermesProfileValue(payload.profile)
+    await updateHermesRouteBinding({
+      source: sourceKey,
+      profile: nextProfile,
+    })
+    const nextProfileLabel = resolveHermesProfileLabel(nextProfile)
+    setConversations(
+      conversations.map((conv) => {
+        if (conv.session?.sessionKind !== 'hermes') return conv
+        const conversationSource = String(conv.session.source || '').trim().toLowerCase() || 'cli'
+        if (conversationSource !== sourceKey) return conv
+        return {
+          ...conv,
+          session: {
+            ...conv.session,
+            profile: nextProfile,
+            profileLabel: nextProfileLabel,
+          },
+        }
+      }),
+    )
+  }, [conversations, setConversations, updateHermesRouteBinding])
 
   return (
     <div className={`flex h-full flex-col bg-card ${focusMode ? 'fixed inset-0 z-50' : ''}`}>
@@ -414,8 +461,28 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
                   <div className="truncate text-sm font-medium text-foreground">
                     {(selectedConversation?.name || activeConversation).replace('agent_', '')}
                   </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    {getConversationStatus(agents, activeConversation)}
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                    <span>{getConversationStatus(agents, activeConversation)}</span>
+                    {selectedHermesProfileLabel && (
+                      <>
+                        <span className="text-muted-foreground/40">•</span>
+                        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-300">
+                          {selectedHermesProfileLabel.replace(/\s+Hermes profile$/i, '')}
+                        </span>
+                      </>
+                    )}
+                    {selectedHermesSourceLabel && (
+                      <>
+                        <span className="text-muted-foreground/40">•</span>
+                        <span>{selectedHermesSourceLabel}</span>
+                      </>
+                    )}
+                    {selectedHermesRuntimeProfileLabel && (
+                      <>
+                        <span className="text-muted-foreground/40">•</span>
+                        <span>Runtime {selectedHermesRuntimeProfileLabel}</span>
+                      </>
+                    )}
                   </div>
                 </div>
                 {/* Split pane button for sessions */}
@@ -499,6 +566,7 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
                     error={sessionTranscriptError}
                     onRefreshTranscript={refreshSessionTranscript}
                     onSavePreferences={handleSaveSessionPreferences}
+                    onUpdateHermesBinding={handleUpdateHermesBinding}
                   />
                 ) : (
                   <>
@@ -529,6 +597,7 @@ function SessionConversationView({
   error,
   onRefreshTranscript,
   onSavePreferences,
+  onUpdateHermesBinding,
 }: {
   session: NonNullable<Conversation['session']>
   messages: SessionTranscriptMessage[]
@@ -536,6 +605,7 @@ function SessionConversationView({
   error: string | null
   onRefreshTranscript: () => void
   onSavePreferences: (payload: { prefKey: string; displayName?: string; colorTag?: string }) => Promise<void>
+  onUpdateHermesBinding: (payload: { source: string; profile: string }) => Promise<void>
 }) {
   const isGatewaySession = session.sessionKind === 'gateway'
   const isPtyCapableKind = session.sessionKind === 'claude-code' || session.sessionKind === 'codex-cli'
@@ -550,9 +620,22 @@ function SessionConversationView({
   const [colorDraft, setColorDraft] = useState(session.colorTag || '')
   const [prefBusy, setPrefBusy] = useState(false)
   const [prefError, setPrefError] = useState<string | null>(null)
+  const [hermesProfileDraft, setHermesProfileDraft] = useState(() => resolveHermesProfileValue(session.profile))
+  const [hermesBindingBusy, setHermesBindingBusy] = useState(false)
+  const [hermesBindingError, setHermesBindingError] = useState<string | null>(null)
   const hasPrefChanges =
     nameDraft.trim() !== (session.displayName || '').trim() ||
     colorDraft !== (session.colorTag || '')
+  const sessionHermesProfileLabel =
+    session.sessionKind === 'hermes' ? resolveHermesProfileLabel(hermesProfileDraft) : null
+  const sessionHermesProfileBadge =
+    session.sessionKind === 'hermes' ? resolveHermesProfileBadgeLabel(hermesProfileDraft) : null
+  const sessionHermesRuntimeProfileLabel =
+    session.sessionKind === 'hermes' ? session.runtimeProfileLabel || null : null
+  const sessionHermesSourceLabel =
+    session.sessionKind === 'hermes'
+      ? resolveHermesSourceLabel(session.source || 'cli')
+      : null
 
   // Only reset view mode when switching to a different session
   useEffect(() => {
@@ -568,7 +651,10 @@ function SessionConversationView({
     setPrefError(null)
     setContinueError(null)
     setLastReply(null)
-  }, [session.prefKey, session.displayName, session.colorTag])
+    setHermesProfileDraft(resolveHermesProfileValue(session.profile))
+    setHermesBindingBusy(false)
+    setHermesBindingError(null)
+  }, [session.prefKey, session.displayName, session.colorTag, session.profile])
 
   useEffect(() => {
     const container = transcriptScrollRef.current
@@ -655,6 +741,26 @@ function SessionConversationView({
     }
   }
 
+  const handleHermesBindingChange = async (nextProfile: string) => {
+    if (session.sessionKind !== 'hermes' || !session.source || hermesBindingBusy) return
+    const normalizedProfile = resolveHermesProfileValue(nextProfile)
+    const previousProfile = hermesProfileDraft
+    setHermesProfileDraft(normalizedProfile)
+    setHermesBindingBusy(true)
+    setHermesBindingError(null)
+    try {
+      await onUpdateHermesBinding({
+        source: session.source,
+        profile: normalizedProfile,
+      })
+    } catch (err) {
+      setHermesProfileDraft(previousProfile)
+      setHermesBindingError(err instanceof Error ? err.message : 'Failed to update Hermes routing')
+    } finally {
+      setHermesBindingBusy(false)
+    }
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Compact session info bar */}
@@ -671,6 +777,36 @@ function SessionConversationView({
             {session.active ? 'active' : 'idle'}
           </span>
           <span className="font-mono-tight">{getSessionKindLabel(session.sessionKind)}</span>
+          {sessionHermesProfileLabel && (
+            <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-emerald-300">
+              {sessionHermesProfileBadge}
+            </span>
+          )}
+          {sessionHermesSourceLabel && <span className="text-muted-foreground/60">{sessionHermesSourceLabel}</span>}
+          {sessionHermesRuntimeProfileLabel && (
+            <span className="text-muted-foreground/60">Runtime {sessionHermesRuntimeProfileLabel}</span>
+          )}
+          {session.sessionKind === 'hermes' && session.source && (
+            <div className="flex items-center gap-1.5 rounded-md border border-border/50 bg-surface-1/60 px-1.5 py-1">
+              <label className="text-[10px] uppercase tracking-wide text-muted-foreground/70" htmlFor={`hermes-session-profile-${session.sessionId}`}>
+                Route profile
+              </label>
+              <select
+                id={`hermes-session-profile-${session.sessionId}`}
+                aria-label={`Hermes profile for ${sessionHermesSourceLabel || 'this route'}`}
+                value={hermesProfileDraft}
+                disabled={hermesBindingBusy}
+                onChange={(event) => void handleHermesBindingChange(event.target.value)}
+                className="h-6 rounded border border-border/60 bg-background px-2 text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 disabled:opacity-60"
+              >
+                {HERMES_PROFILE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           {session.model && <span className="text-muted-foreground/60">{session.model}</span>}
           {session.tokens && <span className="text-muted-foreground/60">{session.tokens}</span>}
           {session.workingDir && <span className="hidden truncate text-muted-foreground/50 sm:inline max-w-[200px]">{session.workingDir}</span>}
@@ -700,6 +836,11 @@ function SessionConversationView({
             </div>
           )}
         </div>
+        {hermesBindingError && (
+          <p className="mt-1 text-[10px] text-amber-300">
+            {hermesBindingError}
+          </p>
+        )}
 
         {/* Collapsible settings */}
         {!isGatewaySession && (
@@ -803,7 +944,13 @@ function SessionConversationView({
                 void handleContinueSession()
               }
             }}
-            placeholder={isGatewaySession ? 'Send message to this agent session...' : 'Send prompt to this local session...'}
+            placeholder={
+              isGatewaySession
+                ? 'Send message to this agent session...'
+                : session.sessionKind === 'hermes' && sessionHermesProfileLabel
+                  ? `Send prompt to ${sessionHermesProfileLabel.replace(/\s+Hermes profile$/i, '')} Hermes via ${sessionHermesSourceLabel || 'CLI / local chat'}${sessionHermesRuntimeProfileLabel ? ` on ${sessionHermesRuntimeProfileLabel}` : ''}...`
+                  : 'Send prompt to this local session...'
+            }
             className="h-7 flex-1 rounded border border-border/40 bg-surface-1 px-2 font-mono-tight text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/30"
           />
           <Button

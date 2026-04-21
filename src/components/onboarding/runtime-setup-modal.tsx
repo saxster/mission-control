@@ -207,6 +207,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [hermesStatus, setHermesStatus] = useState<any>(null)
+  const [runtimeProfileName, setRuntimeProfileName] = useState('default')
   const [providerKey, setProviderKey] = useState('')
   const [providerType, setProviderType] = useState<'anthropic' | 'openai' | 'openrouter' | 'nous' | 'google' | 'xai'>('anthropic')
   const [selectedModel, setSelectedModel] = useState('claude-sonnet-4-6')
@@ -255,10 +256,14 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/hermes')
+      const query = runtimeProfileName ? `?runtimeProfileName=${encodeURIComponent(runtimeProfileName)}` : ''
+      const res = await fetch(`/api/hermes${query}`)
       if (res.ok) {
         const data = await res.json()
         setHermesStatus(data)
+        if (typeof data?.selectedRuntimeProfile?.name === 'string' && data.selectedRuntimeProfile.name !== runtimeProfileName) {
+          setRuntimeProfileName(data.selectedRuntimeProfile.name)
+        }
         if (data.hookInstalled && step === 'hook') {
           setStep('provider')
         }
@@ -266,7 +271,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
     } catch {
       // ignore
     }
-  }, [step])
+  }, [runtimeProfileName, step])
 
   useEffect(() => { fetchStatus() }, [fetchStatus])
 
@@ -291,7 +296,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
       const res = await fetch('/api/hermes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'install-hook' }),
+        body: JSON.stringify({ action: 'install-hook', runtimeProfileName }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
@@ -304,7 +309,18 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
     } finally {
       setRunning(false)
     }
-  }, [fetchStatus])
+  }, [fetchStatus, runtimeProfileName])
+
+  const hermesCliAvailable = hermesStatus?.cliAvailable !== false
+  const canRunHermesCommands = Boolean(hermesStatus?.installed && hermesCliAvailable)
+  const selectedRuntimeProfile = hermesStatus?.selectedRuntimeProfile
+  const runtimeProfiles = Array.isArray(hermesStatus?.runtimeProfiles) && hermesStatus.runtimeProfiles.length > 0
+    ? hermesStatus.runtimeProfiles
+    : [{ name: runtimeProfileName || 'default', label: runtimeProfileName || 'default', description: '', hermesHome: '~/.hermes', exists: true }]
+  const runtimeHomeLabel = selectedRuntimeProfile?.hermesHome || '~/.hermes'
+  const runtimeCommandPrefix = runtimeProfileName && runtimeProfileName !== 'default'
+    ? `hermes -p ${runtimeProfileName}`
+    : 'hermes'
 
   return (
     <div className="p-6">
@@ -316,6 +332,38 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
         <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
           <svg className="w-5 h-5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M4 4l8 8M12 4l-8 8" /></svg>
         </button>
+      </div>
+
+      <div className="mb-4 rounded-lg border border-border/30 bg-secondary/10 p-3 space-y-2">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium text-foreground">Target runtime profile</p>
+            <p className="mt-0.5 text-2xs text-muted-foreground">
+              Setup actions in this modal apply to one real Hermes home at a time.
+            </p>
+          </div>
+          <select
+            aria-label="Hermes runtime profile"
+            value={runtimeProfileName}
+            onChange={(event) => {
+              setRuntimeProfileName(event.target.value)
+              setStep('hook')
+              setError(null)
+              setProviderSaved(false)
+              resetOAuthState()
+            }}
+            className="w-52 px-2 py-1 text-sm bg-background border border-border rounded-md focus:border-primary focus:outline-none"
+          >
+            {runtimeProfiles.map((profile: any) => (
+              <option key={profile.name} value={profile.name}>
+                {profile.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="text-2xs text-muted-foreground/70">
+          Current home: <code>{runtimeHomeLabel}</code>
+        </p>
       </div>
 
       {/* Step indicators */}
@@ -349,7 +397,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
           <div className="p-4 rounded-lg border border-border/30 bg-secondary/20 space-y-3">
             <p className="text-sm font-medium">Install Mission Control Hook</p>
             <p className="text-xs text-muted-foreground">
-              This installs a hook in <code className="text-[11px] bg-black/20 px-1 rounded">~/.hermes/hooks/mission-control/</code> that
+              This installs a hook in <code className="text-[11px] bg-black/20 px-1 rounded">{runtimeHomeLabel}/hooks/mission-control/</code> that
               reports agent activity, session events, and status updates to Mission Control.
             </p>
             <div className="text-xs text-muted-foreground/60 space-y-1">
@@ -361,6 +409,13 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
               </ul>
             </div>
           </div>
+
+          {hermesStatus?.installed && !hermesCliAvailable && (
+            <div className="p-3 rounded-lg border border-blue-500/20 bg-blue-500/5 text-xs text-blue-300">
+              Hermes home state is present, but this station cannot run the Hermes CLI yet. You can still install the hook and edit <code>~/.hermes</code> here, but bootstrap, doctor, and runnable Hermes commands need a working <code>hermes</code> binary.
+              <span className="block mt-1">Current target: <code>{runtimeHomeLabel}</code></span>
+            </div>
+          )}
 
           {hermesStatus && !hermesStatus.hookInstalled && (
             <div className="p-3 rounded-lg border border-amber-500/20 bg-amber-500/5 text-xs text-amber-400">
@@ -396,6 +451,48 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
             <p className="text-xs text-muted-foreground">Hermes needs an API key to talk to an LLM. Choose your provider:</p>
           </div>
 
+          {!hermesCliAvailable && (
+            <div className="p-3 rounded-lg border border-blue-500/20 bg-blue-500/5 text-xs space-y-1.5">
+              <p className="font-medium text-blue-300">CLI-backed checks are unavailable on this station</p>
+              <p className="text-muted-foreground">
+                You can still save provider keys into <code>~/.hermes/.env</code>, but provider readiness, device auth, and doctor/bootstrap status need a runnable <code>hermes</code> binary.
+              </p>
+            </div>
+          )}
+
+          {hermesStatus?.bootstrap?.blocking_checks?.length > 0 && (
+            <div className="p-3 rounded-lg border border-amber-500/20 bg-amber-500/5 text-xs space-y-1.5">
+              <p className="font-medium text-amber-400">Setup blockers detected</p>
+              {hermesStatus.bootstrap.blocking_checks.map((check: any) => (
+                <p key={check.code} className="text-muted-foreground">- {check.message}</p>
+              ))}
+            </div>
+          )}
+
+          {hermesCliAvailable && hermesStatus?.providerReadiness && (
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-2">
+              <StatusCard
+                label="Provider"
+                ok={hermesStatus.providerReadiness.configured}
+                subtitle={hermesStatus.providerReadiness.configured ? 'Configured' : 'Not configured'}
+              />
+              <StatusCard
+                label="Env keys"
+                ok={hermesStatus.providerReadiness.env_configured}
+                subtitle={hermesStatus.providerReadiness.env_configured ? 'Present in .env' : 'Missing'}
+              />
+              <StatusCard
+                label="OAuth"
+                ok={Boolean(hermesStatus.providerReadiness.oauth?.nous || hermesStatus.providerReadiness.oauth?.openai_codex)}
+                subtitle={
+                  hermesStatus.providerReadiness.oauth?.nous || hermesStatus.providerReadiness.oauth?.openai_codex
+                    ? 'Authenticated'
+                    : 'No OAuth session'
+                }
+              />
+            </div>
+          )}
+
           {(() => {
             const PROVIDERS = [
               { id: 'anthropic', label: 'Anthropic', hint: 'Claude', env: 'ANTHROPIC_API_KEY', hermesProvider: 'anthropic', models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5', 'claude-sonnet-4-5'] },
@@ -407,7 +504,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
             ] as const
             const currentProvider = PROVIDERS.find(p => p.id === providerType)
             const providerModels = currentProvider?.models || []
-            const supportsDeviceCode = Boolean(currentProvider && 'supportsDeviceCode' in currentProvider && currentProvider.supportsDeviceCode)
+            const supportsDeviceCode = hermesCliAvailable && Boolean(currentProvider && 'supportsDeviceCode' in currentProvider && currentProvider.supportsDeviceCode)
             const usesDeviceCode = supportsDeviceCode && authMethod === 'device_code'
             const hermesProviderName = (usesDeviceCode
               ? (currentProvider && 'oauthHermesProvider' in currentProvider ? currentProvider.oauthHermesProvider : currentProvider?.hermesProvider)
@@ -531,7 +628,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
                       const res = await fetch('/api/hermes', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: 'run-oauth-model', provider: providerForOAuth, model: customModel || selectedModel, authMethod: 'device_code' }),
+                        body: JSON.stringify({ action: 'run-oauth-model', provider: providerForOAuth, model: customModel || selectedModel, authMethod: 'device_code', runtimeProfileName }),
                       })
                       const data = await res.json().catch(() => ({}))
                       if (typeof data.deviceUrl === 'string' && data.deviceUrl) setOauthUrl(data.deviceUrl)
@@ -611,7 +708,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
                 className="w-full h-9 rounded border border-border/30 bg-surface-1 px-2.5 text-xs text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 font-mono"
               />
               <p className="text-[10px] text-muted-foreground/30 mt-0.5">
-                Saved to ~/.hermes/.env
+                Saved to <code>{runtimeHomeLabel}/.env</code>
               </p>
             </div>
           )}
@@ -648,7 +745,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
                     const res = await fetch('/api/hermes', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ action: 'set-env', key: envMap[providerType], value: providerKey }),
+                      body: JSON.stringify({ action: 'set-env', key: envMap[providerType], value: providerKey, runtimeProfileName }),
                     })
                     if (res.ok) {
                       setProviderSaved(true)
@@ -676,7 +773,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
           <div>
             <p className="text-sm font-medium mb-1">Agent Identity (Optional)</p>
             <p className="text-xs text-muted-foreground">
-              Customize how Hermes communicates. This is saved as <code className="text-[11px] bg-black/20 px-1 rounded">~/.hermes/SOUL.md</code>
+              Customize how Hermes communicates. This is saved as <code className="text-[11px] bg-black/20 px-1 rounded">{runtimeHomeLabel}/SOUL.md</code>
             </p>
           </div>
 
@@ -704,7 +801,7 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
                     await fetch('/api/hermes', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ action: 'set-soul', content: soulContent }),
+                      body: JSON.stringify({ action: 'set-soul', content: soulContent, runtimeProfileName }),
                     })
                   } catch {
                     // non-critical
@@ -728,17 +825,63 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
             </p>
           </div>
 
+          {!hermesCliAvailable && (
+            <div className="p-3 rounded-lg border border-blue-500/20 bg-blue-500/5 text-xs space-y-1.5">
+              <p className="font-medium text-blue-300">Gateway checks are limited</p>
+              <p className="text-muted-foreground">
+                Mission Control can still show stored Hermes state, but direct gateway commands like <code>hermes status</code> and <code>hermes doctor</code> will not run until the CLI is available.
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
             <StatusCard label="Gateway" ok={hermesStatus?.gatewayRunning} subtitle={hermesStatus?.gatewayRunning ? 'Running' : 'Not started'} />
             <StatusCard label="Sessions" value={hermesStatus?.activeSessions || 0} ok={true} />
           </div>
 
+          {hermesStatus?.gateway?.runtime_state && (
+            <div className="p-3 rounded-lg border border-border/20 bg-secondary/10 text-xs space-y-1">
+              <p className="font-medium text-foreground/80">Gateway runtime</p>
+              <p className="text-muted-foreground">State: {String(hermesStatus.gateway.runtime_state)}</p>
+              {hermesStatus.gateway.exit_reason && (
+                <p className="text-amber-400">Last issue: {String(hermesStatus.gateway.exit_reason)}</p>
+              )}
+            </div>
+          )}
+
+          {hermesStatus?.messagingPlatforms?.some((platform: any) => platform?.configured) && (
+            <div className="p-3 rounded-lg border border-border/20 bg-secondary/10 text-xs space-y-2">
+              <p className="font-medium text-foreground/80">Detected channel configuration</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {hermesStatus.messagingPlatforms
+                  .filter((platform: any) => platform?.configured)
+                  .map((platform: any) => (
+                    <div key={platform.name} className="rounded border border-green-500/20 bg-green-500/5 px-2.5 py-2">
+                      <p className="text-green-400">{platform.name}</p>
+                      <p className="text-[10px] text-muted-foreground/60">
+                        {platform.home_channel ? `Home: ${platform.home_channel}` : 'Configured'}
+                      </p>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {hermesStatus?.bootstrap?.recommended_next_steps?.length > 0 && (
+            <div className="p-3 rounded-lg border border-border/20 bg-secondary/10 text-xs space-y-1.5">
+              <p className="font-medium text-foreground/80">Recommended next steps</p>
+              {hermesStatus.bootstrap.recommended_next_steps.map((stepText: string) => (
+                <p key={stepText} className="text-muted-foreground">- {stepText}</p>
+              ))}
+            </div>
+          )}
+
           <div className="p-3 rounded-lg border border-border/20 bg-secondary/10 text-xs space-y-2.5">
             <p className="font-medium text-foreground/80">Set up messaging channels:</p>
 
             <div className="space-y-2.5">
-              <CopyableCommand command="hermes status" label="Check status" runnable />
-              <CopyableCommand command="hermes doctor" label="Diagnose" runnable />
+              <CopyableCommand command="hermes status" label="Check status" runnable={canRunHermesCommands} />
+              <CopyableCommand command="hermes doctor" label="Diagnose" runnable={canRunHermesCommands} />
               <p className="text-[10px] text-muted-foreground/50 mt-2">
                 The messaging gateway requires an interactive terminal to configure platforms (Telegram, Discord, Slack, WhatsApp, Signal).
                 Run in a terminal:
@@ -771,18 +914,47 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
         <div className="space-y-4">
           <div className="p-5 rounded-lg border border-green-500/30 bg-green-500/5 text-center space-y-3">
             <div className="text-3xl">+</div>
-            <p className="text-sm font-semibold text-green-400">Hermes is ready</p>
+            <p className="text-sm font-semibold text-green-400">{hermesCliAvailable ? 'Hermes is ready' : 'Hermes setup has been saved'}</p>
             <p className="text-xs text-muted-foreground">
               Hook installed{providerSaved ? ', provider configured' : ''}{soulContent.trim() ? ', identity set' : ''}.
               {hermesStatus?.cronJobCount > 0 && ` ${hermesStatus.cronJobCount} cron jobs detected.`}
             </p>
           </div>
 
+          {!hermesCliAvailable && (
+            <div className="p-3 rounded-lg border border-blue-500/20 bg-blue-500/5 text-xs space-y-1.5">
+              <p className="font-medium text-blue-300">Final health checks are pending CLI availability</p>
+              <p className="text-muted-foreground">
+                Mission Control finished the filesystem-backed setup steps, but bootstrap and doctor diagnostics will remain unavailable until <code>hermes</code> is runnable on this station.
+              </p>
+            </div>
+          )}
+
+          {hermesCliAvailable && hermesStatus?.doctor && (
+            <div className={`p-3 rounded-lg border text-xs space-y-1.5 ${
+              hermesStatus.doctor.summary?.ok
+                ? 'border-green-500/20 bg-green-500/5'
+                : 'border-amber-500/20 bg-amber-500/5'
+            }`}>
+              <p className={`font-medium ${hermesStatus.doctor.summary?.ok ? 'text-green-400' : 'text-amber-400'}`}>
+                {hermesStatus.doctor.summary?.ok ? 'Diagnostics look healthy' : 'Diagnostics still report issues'}
+              </p>
+              {typeof hermesStatus.doctor.summary?.remaining_issues_count === 'number' && (
+                <p className="text-muted-foreground">
+                  Remaining issues: {hermesStatus.doctor.summary.remaining_issues_count}
+                </p>
+              )}
+              {hermesStatus.doctor.issues?.slice(0, 3).map((issue: string) => (
+                <p key={issue} className="text-muted-foreground">- {issue}</p>
+              ))}
+            </div>
+          )}
+
           <div className="p-3 rounded-lg border border-border/20 bg-secondary/10 text-xs space-y-3">
             <p className="font-medium text-foreground/80">Quick commands:</p>
-            <CopyableCommand command="hermes status" label="Check status" runnable />
-            <CopyableCommand command="hermes doctor" label="Diagnose" runnable />
-            <CopyableCommand command="hermes version" label="Version" runnable />
+            <CopyableCommand command={`${runtimeCommandPrefix} status`} label="Check status" runnable={canRunHermesCommands} runtimeProfileName={runtimeProfileName} />
+            <CopyableCommand command={`${runtimeCommandPrefix} doctor`} label="Diagnose" runnable={canRunHermesCommands} runtimeProfileName={runtimeProfileName} />
+            <CopyableCommand command={`${runtimeCommandPrefix} version`} label="Version" runnable={canRunHermesCommands} runtimeProfileName={runtimeProfileName} />
           </div>
 
           <div className="flex justify-end">
@@ -795,11 +967,12 @@ function HermesSetup({ onClose, onComplete }: { onClose: () => void; onComplete:
   )
 }
 
-function CopyableCommand({ command, label, runnable = false, onOutput }: {
+function CopyableCommand({ command, label, runnable = false, onOutput, runtimeProfileName }: {
   command: string
   label: string
   runnable?: boolean
   onOutput?: (output: string) => void
+  runtimeProfileName?: string
 }) {
   const [copied, setCopied] = useState(false)
   const [running, setRunning] = useState(false)
@@ -839,7 +1012,7 @@ function CopyableCommand({ command, label, runnable = false, onOutput }: {
       const res = await fetch('/api/hermes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'run-command', command }),
+        body: JSON.stringify({ action: 'run-command', command, runtimeProfileName }),
       })
       const data = await res.json()
       if (res.ok && data.success) {

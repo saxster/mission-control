@@ -1,10 +1,10 @@
 'use client'
 
-import { useMissionControl } from '@/store'
+import { useMissionControlChatPanelState } from '@/store/selectors'
 import { ChatWorkspace } from './chat-workspace'
 
 export function ChatPanel() {
-  const { chatPanelOpen, setChatPanelOpen } = useMissionControl()
+  const { chatPanelOpen, setChatPanelOpen } = useMissionControlChatPanelState()
 
   if (!chatPanelOpen) return null
 

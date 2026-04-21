@@ -17,6 +17,7 @@ type SessionRecord = {
   agent?: string
   kind?: string
   source?: string
+  channel?: string
   model?: string
   tokens?: string
   age?: string
@@ -25,6 +26,10 @@ type SessionRecord = {
   lastActivity?: number
   workingDir?: string | null
   lastUserPrompt?: string | null
+  profile?: string
+  profileLabel?: string
+  runtimeProfileName?: string
+  runtimeProfileLabel?: string
 }
 
 type SessionPrefs = Record<string, { name?: string; color?: string }>
@@ -72,6 +77,7 @@ function readSessions(payload: unknown): SessionRecord[] {
       agent: readString(session?.agent),
       kind: readString(session?.kind),
       source: readString(session?.source),
+      channel: readString(session?.channel),
       model: readString(session?.model),
       tokens: readString(session?.tokens),
       age: readString(session?.age),
@@ -80,6 +86,10 @@ function readSessions(payload: unknown): SessionRecord[] {
       lastActivity: readNumber(session?.lastActivity),
       workingDir: typeof session?.workingDir === 'string' || session?.workingDir === null ? session.workingDir : undefined,
       lastUserPrompt: typeof session?.lastUserPrompt === 'string' || session?.lastUserPrompt === null ? session.lastUserPrompt : undefined,
+      profile: readString(session?.profile),
+      profileLabel: readString(session?.profileLabel),
+      runtimeProfileName: readString(session?.runtimeProfileName),
+      runtimeProfileLabel: readString(session?.runtimeProfileLabel),
     }]
   })
 }
@@ -278,7 +288,7 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
           const prefKey = `${sessionKind}:${s.id}`
           const pref = prefs[prefKey] || {}
           const defaultName = s.source === 'local'
-            ? `${kindLabel} • ${s.key || s.id}`
+            ? `${sessionKind === 'hermes' && s.profileLabel ? s.profileLabel : kindLabel} • ${s.key || s.id}`
             : `${s.agent || 'Gateway'} • ${s.key || s.id}`
           const sessionName = pref.name || defaultName
 
@@ -295,6 +305,11 @@ export function ConversationList({ onNewConversation: _onNewConversation }: Conv
               agent: s.agent || undefined,
               displayName: sessionName,
               colorTag: typeof pref.color === 'string' ? pref.color : undefined,
+              profile: s.profile,
+              profileLabel: s.profileLabel,
+              runtimeProfileName: s.runtimeProfileName,
+              runtimeProfileLabel: s.runtimeProfileLabel,
+              source: s.kind === 'hermes' ? (s.channel || s.source) : undefined,
               model: s.model,
               tokens: s.tokens,
               workingDir: s.workingDir || null,

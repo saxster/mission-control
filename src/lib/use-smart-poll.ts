@@ -16,14 +16,17 @@ interface SmartPollOptions {
   maxBackoffMultiplier?: number
   /** Only poll when this returns true */
   enabled?: boolean
+  /** Fire once on mount before interval polling begins */
+  fireImmediately?: boolean
 }
 
 /**
  * Visibility-aware polling hook that pauses when the browser tab is hidden
  * and resumes immediately when the tab becomes visible again.
  *
- * Always fires an initial fetch on mount (regardless of SSE/WS state)
- * to bootstrap component data. Subsequent polls respect pause options.
+ * Fires an initial fetch on mount by default (regardless of SSE/WS state)
+ * to bootstrap component data. Callers can opt out when they already
+ * have a separate cold-start path and only want interval polling here.
  *
  * Returns a function to manually trigger an immediate poll.
  */
@@ -39,6 +42,7 @@ export function useSmartPoll(
     backoff = false,
     maxBackoffMultiplier = 3,
     enabled = true,
+    fireImmediately = true,
   } = options
 
   const callbackRef = useRef(callback)
@@ -98,7 +102,7 @@ export function useSmartPoll(
   useEffect(() => {
     // Always fire initial fetch to bootstrap data, even if SSE/WS is connected.
     // SSE delivers events (agent.updated, etc.) but not the full initial state.
-    if (!initialFiredRef.current && enabled) {
+    if (!initialFiredRef.current && enabled && fireImmediately) {
       initialFiredRef.current = true
       callbackRef.current()
     }
@@ -132,7 +136,7 @@ export function useSmartPoll(
         intervalRef.current = undefined
       }
     }
-  }, [fire, startInterval, enabled])
+  }, [fire, startInterval, enabled, fireImmediately])
 
   // Restart interval when connection state changes (WS or SSE)
   useEffect(() => {

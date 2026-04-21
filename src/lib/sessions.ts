@@ -56,6 +56,10 @@ export function invalidateSessionCache(): void {
   _sessionCache = null
 }
 
+export function warmGatewaySessionCache(force = false): GatewaySession[] {
+  return getAllGatewaySessions(60 * 60 * 1000, force)
+}
+
 /**
  * Read all sessions from OpenClaw agent session stores on disk.
  *

@@ -1,0 +1,10 @@
+{
+  "missionControlOverview": {
+    "maxInitialJsBytes": 1150000,
+    "minLazyJsBytes": 300000,
+    "baselineInitialJsBytes": 3607070,
+    "baselineCommit": "734e2a4",
+    "baselineCapturedAt": "2026-04-10T17:06:00Z",
+    "minReductionRatioVsBaseline": 0.4
+  }
+}

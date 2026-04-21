@@ -85,6 +85,7 @@
     "channels": "Каналы",
     "skills": "Навыки",
     "memory": "Память",
+    "knowledgeBase": "База знаний",
     "activity": "Активность",
     "logs": "Журналы",
     "costTracker": "Учёт затрат",
@@ -155,6 +156,7 @@
     "loadingActiveSessions": "Загрузка активных сессий",
     "hydratingWorkspaceBoard": "Инициализация рабочей панели",
     "mappingMemoryGraph": "Построение графа памяти",
+    "mappingKnowledgeBaseGraph": "Построение графа базы знаний",
     "indexingSkillCatalog": "Индексация каталога навыков"
   },
   "header": {
@@ -191,7 +193,7 @@
     "goToNotifications": "Перейти к уведомлениям",
     "goToTokenUsage": "Перейти к использованию токенов",
     "goToLogs": "Перейти к журналам",
-    "goToMemoryBrowser": "Перейти к обозревателю памяти",
+    "goToKnowledgeBase": "Перейти к базе знаний",
     "goToIntegrations": "Перейти к интеграциям",
     "goToSettings": "Перейти к настройкам",
     "goToGateways": "Перейти к шлюзам",

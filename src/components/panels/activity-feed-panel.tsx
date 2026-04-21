@@ -4,7 +4,10 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { Loader } from '@/components/ui/loader'
+import { HermesRouteBindingControl } from '@/components/hermes/hermes-route-binding-control'
 import { useMissionControl } from '@/store'
+import { resolveHermesProfileValue, resolveHermesSourceLabel } from '@/lib/hermes-routing'
+import { useHermesRouteBindings } from '@/lib/use-hermes-route-bindings'
 import { useSmartPoll } from '@/lib/use-smart-poll'
 
 interface Activity {
@@ -44,6 +47,7 @@ const activityIcons: Record<string, string> = {
   comment_added: '#',
   agent_created: '@',
   agent_status_change: '~',
+  hermes_session_started: 'H',
   standup_generated: '!',
   mention: '>',
   assignment: '=',
@@ -56,6 +60,7 @@ const activityColors: Record<string, string> = {
   comment_added: 'text-purple-400',
   agent_created: 'text-cyan-400',
   agent_status_change: 'text-yellow-400',
+  hermes_session_started: 'text-emerald-400',
   standup_generated: 'text-orange-400',
   mention: 'text-pink-400',
   assignment: 'text-indigo-400',
@@ -89,9 +94,38 @@ function groupByDay(activities: Activity[]): Record<string, Activity[]> {
   return groups
 }
 
+function getHermesBindingDetails(activity: Activity, bindings: Record<string, string>) {
+  if (activity.type !== 'hermes_session_started') return null
+  const source = typeof activity.data?.source === 'string' ? activity.data.source : ''
+  if (!source) return null
+  const sourceKey = source.trim().toLowerCase() || 'cli'
+  return {
+    sourceKey,
+    sourceLabel: typeof activity.data?.sourceLabel === 'string'
+      ? activity.data.sourceLabel
+      : resolveHermesSourceLabel(sourceKey),
+    profile: resolveHermesProfileValue(
+      typeof bindings[sourceKey] === 'string'
+        ? bindings[sourceKey]
+        : typeof activity.data?.profile === 'string'
+          ? activity.data.profile
+          : 'primary',
+    ),
+  }
+}
+
 // ── Activity row (flat feed) ────────────────────
-function ActivityRow({ activity }: { activity: Activity }) {
+function ActivityRow({
+  activity,
+  hermesBindings,
+  onUpdateHermesBinding,
+}: {
+  activity: Activity
+  hermesBindings: Record<string, string>
+  onUpdateHermesBinding: (payload: { source: string; profile: string }) => Promise<void>
+}) {
   const t = useTranslations('activityFeed')
+  const hermesBinding = getHermesBindingDetails(activity, hermesBindings)
   return (
     <div className="bg-card rounded-lg p-3 border-l-2 border-border hover:bg-surface-1 transition-smooth">
       <div className="flex items-start gap-3">
@@ -163,6 +197,15 @@ function ActivityRow({ activity }: { activity: Activity }) {
                   </pre>
                 </details>
               )}
+
+              {hermesBinding && (
+                <HermesRouteBindingControl
+                  source={hermesBinding.sourceKey}
+                  sourceLabel={hermesBinding.sourceLabel}
+                  profile={hermesBinding.profile}
+                  onChange={onUpdateHermesBinding}
+                />
+              )}
             </div>
 
             <div className="flex-shrink-0 text-[10px] text-muted-foreground/50">
@@ -176,7 +219,16 @@ function ActivityRow({ activity }: { activity: Activity }) {
 }
 
 // ── Timeline row (agent-grouped view) ───────────
-function TimelineRow({ activity }: { activity: Activity }) {
+function TimelineRow({
+  activity,
+  hermesBindings,
+  onUpdateHermesBinding,
+}: {
+  activity: Activity
+  hermesBindings: Record<string, string>
+  onUpdateHermesBinding: (payload: { source: string; profile: string }) => Promise<void>
+}) {
+  const hermesBinding = getHermesBindingDetails(activity, hermesBindings)
   return (
     <div className="flex items-start gap-2.5 pl-3 py-1.5 hover:bg-secondary/30 rounded-r-lg transition-smooth relative">
       <span
@@ -200,6 +252,15 @@ function TimelineRow({ activity }: { activity: Activity }) {
             {activity.entity.type === 'task' ? `${activity.entity.title}` : activity.entity.title}
           </p>
         )}
+        {hermesBinding && (
+          <HermesRouteBindingControl
+            source={hermesBinding.sourceKey}
+            sourceLabel={hermesBinding.sourceLabel}
+            profile={hermesBinding.profile}
+            onChange={onUpdateHermesBinding}
+            compact
+          />
+        )}
       </div>
       <span className="text-2xs text-muted-foreground font-mono-tight shrink-0">
         {new Date(activity.created_at * 1000).toLocaleTimeString(undefined, {
@@ -215,6 +276,7 @@ function TimelineRow({ activity }: { activity: Activity }) {
 export function ActivityFeedPanel() {
   const t = useTranslations('activityFeed')
   const { agents } = useMissionControl()
+  const { bindings: hermesBindings, updateBinding: updateHermesBinding } = useHermesRouteBindings()
 
   const [activities, setActivities] = useState<Activity[]>([])
   const [sessions, setSessions] = useState<SessionInfo[]>([])
@@ -564,7 +626,14 @@ export function ActivityFeedPanel() {
                     </div>
                     <div className="space-y-1 pl-2 border-l-2 border-border/50">
                       {dayActivities.map((act) => (
-                        <TimelineRow key={act.id} activity={act} />
+                        <TimelineRow
+                          key={act.id}
+                          activity={act}
+                          hermesBindings={hermesBindings}
+                          onUpdateHermesBinding={async (payload) => {
+                            await updateHermesBinding(payload)
+                          }}
+                        />
                       ))}
                     </div>
                   </div>
@@ -600,7 +669,14 @@ export function ActivityFeedPanel() {
           /* ── Flat feed (all agents) ──────── */
           <div className="space-y-2">
             {activities.map((activity, index) => (
-              <ActivityRow key={`${activity.id}-${index}`} activity={activity} />
+              <ActivityRow
+                key={`${activity.id}-${index}`}
+                activity={activity}
+                hermesBindings={hermesBindings}
+                onUpdateHermesBinding={async (payload) => {
+                  await updateHermesBinding(payload)
+                }}
+              />
             ))}
           </div>
         )}

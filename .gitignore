@@ -9,6 +9,9 @@ out/
 build/
 dist/
 
+# Perf + Playwright output artifacts
+output/
+
 # Misc
 .DS_Store
 *.pem

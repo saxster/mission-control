@@ -1,42 +1,13 @@
 'use client'
 
-import { createElement, useEffect, useMemo, useState } from 'react'
+import { createElement, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { NavRail } from '@/components/layout/nav-rail'
 import { HeaderBar } from '@/components/layout/header-bar'
 import { LiveFeed } from '@/components/layout/live-feed'
 import { Dashboard } from '@/components/dashboard/dashboard'
-import { LogViewerPanel } from '@/components/panels/log-viewer-panel'
-import { CronManagementPanel } from '@/components/panels/cron-management-panel'
-import { MemoryBrowserPanel } from '@/components/panels/memory-browser-panel'
-import { CostTrackerPanel } from '@/components/panels/cost-tracker-panel'
-import { TaskBoardPanel } from '@/components/panels/task-board-panel'
-import { ActivityFeedPanel } from '@/components/panels/activity-feed-panel'
-import { AgentSquadPanelPhase3 } from '@/components/panels/agent-squad-panel-phase3'
 import { AgentCommsPanel } from '@/components/panels/agent-comms-panel'
-import { StandupPanel } from '@/components/panels/standup-panel'
-import { OrchestrationBar } from '@/components/panels/orchestration-bar'
-import { NotificationsPanel } from '@/components/panels/notifications-panel'
-import { UserManagementPanel } from '@/components/panels/user-management-panel'
-import { AuditTrailPanel } from '@/components/panels/audit-trail-panel'
-import { WebhookPanel } from '@/components/panels/webhook-panel'
 import { SettingsPanel } from '@/components/panels/settings-panel'
-import { GatewayConfigPanel } from '@/components/panels/gateway-config-panel'
-import { IntegrationsPanel } from '@/components/panels/integrations-panel'
-import { AlertRulesPanel } from '@/components/panels/alert-rules-panel'
-import { MultiGatewayPanel } from '@/components/panels/multi-gateway-panel'
-import { GatewayControlPanel } from '@/components/panels/gateway-control-panel'
-import { SuperAdminPanel } from '@/components/panels/super-admin-panel'
-import { OfficePanel } from '@/components/panels/office-panel'
-import { GitHubSyncPanel } from '@/components/panels/github-sync-panel'
-import { SkillsPanel } from '@/components/panels/skills-panel'
-import { LocalAgentsDocPanel } from '@/components/panels/local-agents-doc-panel'
-import { ChannelsPanel } from '@/components/panels/channels-panel'
-import { DebugPanel } from '@/components/panels/debug-panel'
-import { SecurityAuditPanel } from '@/components/panels/security-audit-panel'
-import { NodesPanel } from '@/components/panels/nodes-panel'
-import { ExecApprovalPanel } from '@/components/panels/exec-approval-panel'
-import { SystemMonitorPanel } from '@/components/panels/system-monitor-panel'
 import { ChatPagePanel } from '@/components/panels/chat-page-panel'
 import { ChatPanel } from '@/components/chat/chat-panel'
 import { STORAGE_GATEWAY_URL } from '@/lib/device-identity'
@@ -50,22 +21,62 @@ import { OpenClawUpdateBanner } from '@/components/layout/openclaw-update-banner
 import { OpenClawDoctorBanner } from '@/components/layout/openclaw-doctor-banner'
 import { OnboardingWizard } from '@/components/onboarding/onboarding-wizard'
 import { Loader } from '@/components/ui/loader'
-import { ProjectManagerModal } from '@/components/modals/project-manager-modal'
 import { ExecApprovalOverlay } from '@/components/modals/exec-approval-overlay'
+import {
+  LazyActivityFeedPanel,
+  LazyAgentsPanelContent,
+  LazyAlertRulesPanel,
+  LazyAuditTrailPanel,
+  LazyChannelsPanel,
+  LazyCostTrackerPanel,
+  LazyCronManagementPanel,
+  LazyDebugPanel,
+  LazyExecApprovalPanel,
+  LazyGatewayControlPanel,
+  LazyGatewayConfigPanel,
+  LazyGitHubSyncPanel,
+  LazyIntegrationsPanel,
+  LazyLogViewerPanel,
+  LazyKnowledgeBasePanel,
+  LazyMultiGatewayPanel,
+  LazyNodesPanel,
+  LazyNotificationsPanel,
+  LazyOfficePanel,
+  LazyObsidianIntegrationPanel,
+  LazyProjectManagerModal,
+  LazySecurityAuditPanel,
+  LazySkillEvolutionPanel,
+  LazySkillsPanel,
+  LazyStandupPanel,
+  LazySystemMonitorPanel,
+  LazyTaskBoardPanel,
+  LazyUserManagementPanel,
+  LazyWebhookPanel,
+  LazySuperAdminPanel,
+  LazyCapabilitiesPanel,
+  LazyStudioPanel,
+  LazyLibraryPanel,
+} from '@/app/panel-registry'
 import { useWebSocket } from '@/lib/websocket'
 import { useServerEvents } from '@/lib/use-server-events'
 import { completeNavigationTiming } from '@/lib/navigation-metrics'
 import { panelHref, useNavigateToPanel } from '@/lib/navigation'
 import { clearOnboardingDismissedThisSession, clearOnboardingReplayFromStart, getOnboardingSessionDecision, markOnboardingReplayFromStart, readOnboardingDismissedThisSession } from '@/lib/onboarding-session'
+import { initMissionControlPerformanceObserver } from '@/lib/performance-monitor'
+import {
+  emitMissionControlHarnessReady,
+  getMissionControlHarnessAttributes,
+  isMissionControlHarnessTestMode,
+} from '@/lib/mission-control-harness'
 import { Button } from '@/components/ui/button'
-import { useMissionControl } from '@/store'
+import { useMissionControlContentRouterState, useMissionControlShellState } from '@/store/selectors'
 
 interface GatewaySummary {
   id: number
   is_primary: number
 }
 
-const STEP_KEYS = ['auth', 'capabilities', 'config', 'connect', 'agents', 'sessions', 'projects', 'memory', 'skills'] as const
+const STEP_KEYS = ['auth', 'capabilities', 'config', 'connect', 'agents', 'sessions', 'projects', 'knowledgeBase', 'skills'] as const
 
 const bootLabelKeys: Record<string, string> = {
   auth: 'authenticatingOperator',
@@ -75,7 +86,7 @@ const bootLabelKeys: Record<string, string> = {
   agents: 'syncingAgentRegistry',
   sessions: 'loadingActiveSessions',
   projects: 'hydratingWorkspaceBoard',
-  memory: 'mappingMemoryGraph',
+  knowledgeBase: 'mappingKnowledgeBaseGraph',
   skills: 'indexingSkillCatalog',
 }
 
@@ -90,30 +101,33 @@ export default function Home() {
   const tb = useTranslations('boot')
   const tp = useTranslations('page')
   const tc = useTranslations('common')
-  const { activeTab, setActiveTab, setCurrentUser, setDashboardMode, setGatewayAvailable, setLocalSessionsAvailable, setCapabilitiesChecked, setSubscription, setDefaultOrgName, setUpdateAvailable, setOpenclawUpdate, showOnboarding, setShowOnboarding, liveFeedOpen, toggleLiveFeed, showProjectManagerModal, setShowProjectManagerModal, fetchProjects, setChatPanelOpen, bootComplete, setBootComplete, setAgents, setSessions, setProjects, setInterfaceMode, setMemoryGraphAgents, setSkillsData } = useMissionControl()
+  const { optimisticPanel, setActiveTab, setOptimisticPanel, setCurrentUser, setDashboardMode, setGatewayAvailable, setLocalSessionsAvailable, setCapabilitiesChecked, setSubscription, setDefaultOrgName, setUpdateAvailable, setOpenclawUpdate, showOnboarding, setShowOnboarding, liveFeedOpen, toggleLiveFeed, showProjectManagerModal, setShowProjectManagerModal, fetchProjects, setChatPanelOpen, bootComplete, setBootComplete, setAgents, setSessions, setProjects, setInterfaceMode, setSkillsData } = useMissionControlShellState()
+  const hideHarnessChrome = isMissionControlHarnessTestMode()
 
   // Sync URL → Zustand activeTab
   const pathname = usePathname()
   const panelFromUrl = pathname === '/' ? 'overview' : pathname.slice(1)
-  const normalizedPanel = panelFromUrl === 'sessions' ? 'chat' : panelFromUrl
-
-  useEffect(() => {
-    completeNavigationTiming(pathname)
-  }, [pathname])
-
-  useEffect(() => {
-    completeNavigationTiming(panelHref(activeTab))
-  }, [activeTab])
+  const normalizedPanel = panelFromUrl === 'sessions'
+    ? 'chat'
+    : panelFromUrl === 'memory'
+      ? 'knowledge-base'
+      : panelFromUrl
+  const displayPanel = optimisticPanel ?? normalizedPanel
 
   useEffect(() => {
     setActiveTab(normalizedPanel)
+    if (optimisticPanel === normalizedPanel) {
+      setOptimisticPanel(null)
+    }
     if (normalizedPanel === 'chat') {
       setChatPanelOpen(false)
     }
     if (panelFromUrl === 'sessions') {
       router.replace('/chat')
+    } else if (panelFromUrl === 'memory') {
+      router.replace('/knowledge-base')
     }
-  }, [panelFromUrl, normalizedPanel, router, setActiveTab, setChatPanelOpen])
+  }, [normalizedPanel, optimisticPanel, panelFromUrl, router, setActiveTab, setChatPanelOpen, setOptimisticPanel])
 
   // Connect to SSE for real-time local DB events (tasks, agents, chat, etc.)
   useServerEvents()
@@ -162,6 +176,17 @@ export default function Home() {
       'font-size: 12px; color: #718096;'
     )
   }, [bootComplete])
+
+  useEffect(() => initMissionControlPerformanceObserver(), [])
+
+  useEffect(() => {
+    emitMissionControlHarnessReady({
+      pathname,
+      activeTab: displayPanel,
+      bootComplete,
+      showOnboarding,
+    })
+  }, [pathname, displayPanel, bootComplete, showOnboarding])
 
   useEffect(() => {
     setIsClient(true)
@@ -377,14 +402,11 @@ export default function Home() {
           if (projectsData?.projects) setProjects(projectsData.projects)
         })
         .finally(() => { markStep('projects') }),
-      // Memory graph can be slow — don't block boot
+      // Knowledge Base graph can be slow — don't block boot
       (() => {
-        markStep('memory')
-        return fetch('/api/memory/graph?agent=all')
+        markStep('knowledgeBase')
+        return fetch('/api/knowledge-base/graph')
           .then(r => r.ok ? r.json() : null)
-          .then((graphData) => {
-            if (graphData?.agents) setMemoryGraphAgents(graphData.agents)
-          })
       })(),
       fetch('/api/skills')
         .then(r => r.ok ? r.json() : null)
@@ -395,14 +417,27 @@ export default function Home() {
     ]).catch(() => { /* panels will lazy-load as fallback */ })
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once on mount, not on every pathname change
-  }, [connect, router, setCurrentUser, setDashboardMode, setGatewayAvailable, setLocalSessionsAvailable, setCapabilitiesChecked, setSubscription, setUpdateAvailable, setShowOnboarding, setAgents, setSessions, setProjects, setInterfaceMode, setMemoryGraphAgents, setSkillsData])
+  }, [connect, router, setCurrentUser, setDashboardMode, setGatewayAvailable, setLocalSessionsAvailable, setCapabilitiesChecked, setSubscription, setUpdateAvailable, setShowOnboarding, setAgents, setSessions, setProjects, setInterfaceMode, setSkillsData])
+
+  const harnessAttributes = getMissionControlHarnessAttributes({
+    activePanel: displayPanel,
+    bootComplete,
+    showOnboarding,
+  })
 
   if (!isClient || !bootComplete) {
-    return <Loader variant="page" steps={isClient ? initSteps : undefined} />
+    return (
+      <div {...harnessAttributes}>
+        <Loader variant="page" steps={isClient ? initSteps : undefined} />
+      </div>
+    )
   }
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <div
+      {...harnessAttributes}
+      className="flex h-screen bg-background overflow-hidden"
+    >
       <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md focus:text-sm focus:font-medium">
         {tc('skipToMainContent')}
       </a>
@@ -415,10 +450,10 @@ export default function Home() {
         {!showOnboarding && (
           <>
             <HeaderBar />
-            <LocalModeBanner />
-            <UpdateBanner />
-            <OpenClawUpdateBanner />
-            <OpenClawDoctorBanner />
+            {!hideHarnessChrome && <LocalModeBanner />}
+            {!hideHarnessChrome && <UpdateBanner />}
+            {!hideHarnessChrome && <OpenClawUpdateBanner />}
+            {!hideHarnessChrome && <OpenClawDoctorBanner />}
           </>
         )}
         <main
@@ -427,9 +462,9 @@ export default function Home() {
           role="main"
           aria-hidden={showOnboarding}
         >
-          <div aria-live="polite" className="flex flex-col min-h-full">
-            <ErrorBoundary key={activeTab}>
-              <ContentRouter tab={activeTab} />
+          <div aria-live="polite" className="relative flex flex-col min-h-full">
+            <ErrorBoundary>
+              <ContentRouter tab={displayPanel} />
             </ErrorBoundary>
           </div>
 {/* Footer removed — attribution moved to nav sidebar */}
@@ -444,7 +479,7 @@ export default function Home() {
       )}
 
       {/* Floating button to reopen LiveFeed when closed */}
-      {!showOnboarding && !liveFeedOpen && (
+      {!showOnboarding && !liveFeedOpen && !hideHarnessChrome && (
         <button
           onClick={toggleLiveFeed}
           className="hidden lg:flex fixed right-0 top-1/2 -translate-y-1/2 z-30 w-6 h-12 items-center justify-center bg-card border border-r-0 border-border rounded-l-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-all duration-200"
@@ -464,7 +499,7 @@ export default function Home() {
 
       {/* Global Project Manager Modal */}
       {!showOnboarding && showProjectManagerModal && (
-        <ProjectManagerModal
+        <LazyProjectManagerModal
           onClose={() => setShowProjectManagerModal(false)}
           onChanged={async () => { await fetchProjects() }}
         />
@@ -479,12 +514,42 @@ const ESSENTIAL_PANELS = new Set([
   'overview', 'agents', 'tasks', 'chat', 'activity', 'logs', 'settings',
 ])
 
+function KeepAliveLogsPanel({ active }: { active: boolean }) {
+  const [hasMountedOnce, setHasMountedOnce] = useState(active)
+
+  useEffect(() => {
+    if (active) {
+      setHasMountedOnce(true)
+    }
+  }, [active])
+
+  if (!hasMountedOnce) return null
+
+  return (
+    <div
+      className={active ? 'h-full' : 'pointer-events-none absolute inset-0 invisible overflow-hidden'}
+      aria-hidden={active ? undefined : true}
+    >
+      <LazyLogViewerPanel active={active} />
+    </div>
+  )
+}
+
+function PanelNavigationCommitMarker({ panel }: { panel: string }) {
+  useLayoutEffect(() => {
+    completeNavigationTiming(panelHref(panel))
+  }, [panel])
+
+  return null
+}
+
 function ContentRouter({ tab }: { tab: string }) {
   const tp = useTranslations('page')
-  const { dashboardMode, interfaceMode, setInterfaceMode } = useMissionControl()
+  const { dashboardMode, interfaceMode, setInterfaceMode } = useMissionControlContentRouterState()
   const navigateToPanel = useNavigateToPanel()
   const isLocal = dashboardMode === 'local'
   const panelName = tab.replace(/-/g, ' ')
+  const showLogsPanel = tab === 'logs'
 
   // Guard: show nudge for non-essential panels in essential mode
   if (interfaceMode === 'essential' && !ESSENTIAL_PANELS.has(tab)) {
@@ -516,11 +581,13 @@ function ContentRouter({ tab }: { tab: string }) {
     )
   }
 
+  let panelContent: ReactNode
+
   switch (tab) {
     case 'overview':
-      return (
+      panelContent = (
         <>
-          <Dashboard />
+          <Dashboard active />
           {!isLocal && (
             <div className="mt-4 mx-4 mb-4 rounded-lg border border-border bg-card overflow-hidden">
               <AgentCommsPanel />
@@ -528,82 +595,127 @@ function ContentRouter({ tab }: { tab: string }) {
           )}
         </>
       )
+      break
     case 'tasks':
-      return <TaskBoardPanel />
+      panelContent = <LazyTaskBoardPanel />
+      break
     case 'agents':
-      return (
-        <>
-          <OrchestrationBar />
-          {isLocal && <LocalAgentsDocPanel />}
-          <AgentSquadPanelPhase3 />
-        </>
-      )
+      panelContent = <LazyAgentsPanelContent isLocal={isLocal} />
+      break
     case 'notifications':
-      return <NotificationsPanel />
+      panelContent = <LazyNotificationsPanel />
+      break
     case 'standup':
-      return <StandupPanel />
+      panelContent = <LazyStandupPanel />
+      break
     case 'sessions':
-      return <ChatPagePanel />
+      panelContent = <ChatPagePanel />
+      break
     case 'logs':
-      return <LogViewerPanel />
+      panelContent = null
+      break
     case 'cron':
-      return <CronManagementPanel />
+      panelContent = <LazyCronManagementPanel />
+      break
     case 'memory':
-      return <MemoryBrowserPanel />
+      panelContent = <LazyKnowledgeBasePanel />
+      break
+    case 'knowledge-base':
+      panelContent = <LazyKnowledgeBasePanel />
+      break
+    case 'obsidian':
+      panelContent = <LazyObsidianIntegrationPanel />
+      break
     case 'cost-tracker':
     case 'tokens':
     case 'agent-costs':
-      return <CostTrackerPanel />
+      panelContent = <LazyCostTrackerPanel />
+      break
     case 'users':
-      return <UserManagementPanel />
+      panelContent = <LazyUserManagementPanel />
+      break
     case 'history':
     case 'activity':
-      return <ActivityFeedPanel />
+      panelContent = <LazyActivityFeedPanel />
+      break
     case 'audit':
-      return <AuditTrailPanel />
+      panelContent = <LazyAuditTrailPanel />
+      break
     case 'webhooks':
-      return <WebhookPanel />
+      panelContent = <LazyWebhookPanel />
+      break
     case 'alerts':
-      return <AlertRulesPanel />
+      panelContent = <LazyAlertRulesPanel />
+      break
+    case 'evolution':
+      panelContent = <LazySkillEvolutionPanel />
+      break
     case 'gateways':
-      if (isLocal) return <GatewayControlPanel />
-      return <MultiGatewayPanel />
+      panelContent = isLocal ? <LazyGatewayControlPanel /> : <LazyMultiGatewayPanel />
+      break
     case 'gateway-config':
-      if (isLocal) return <LocalModeUnavailable panel={tab} />
-      return <GatewayConfigPanel />
+      panelContent = isLocal ? <LocalModeUnavailable panel={tab} /> : <LazyGatewayConfigPanel />
+      break
     case 'integrations':
-      return <IntegrationsPanel />
+      panelContent = <LazyIntegrationsPanel />
+      break
     case 'settings':
-      return <SettingsPanel />
+      panelContent = <SettingsPanel />
+      break
     case 'super-admin':
-      return <SuperAdminPanel />
+      panelContent = <LazySuperAdminPanel />
+      break
     case 'github':
-      return <GitHubSyncPanel />
+      panelContent = <LazyGitHubSyncPanel />
+      break
     case 'office':
-      return <OfficePanel />
+      panelContent = <LazyOfficePanel />
+      break
     case 'monitor':
-      return <SystemMonitorPanel />
+      panelContent = <LazySystemMonitorPanel />
+      break
     case 'skills':
-      return <SkillsPanel />
+      panelContent = <LazySkillsPanel />
+      break
     case 'channels':
-      if (isLocal) return <LocalModeUnavailable panel={tab} />
-      return <ChannelsPanel />
+      panelContent = isLocal ? <LocalModeUnavailable panel={tab} /> : <LazyChannelsPanel />
+      break
     case 'nodes':
-      if (isLocal) return <LocalModeUnavailable panel={tab} />
-      return <NodesPanel />
+      panelContent = isLocal ? <LocalModeUnavailable panel={tab} /> : <LazyNodesPanel />
+      break
     case 'security':
-      return <SecurityAuditPanel />
+      panelContent = <LazySecurityAuditPanel />
+      break
     case 'debug':
-      return <DebugPanel />
+      panelContent = <LazyDebugPanel />
+      break
     case 'exec-approvals':
-      if (isLocal) return <LocalModeUnavailable panel={tab} />
-      return <ExecApprovalPanel />
+      panelContent = isLocal ? <LocalModeUnavailable panel={tab} /> : <LazyExecApprovalPanel />
+      break
     case 'chat':
-      return <ChatPagePanel />
+      panelContent = <ChatPagePanel />
+      break
+    case 'capabilities':
+      panelContent = <LazyCapabilitiesPanel />
+      break
+    case 'studio':
+      panelContent = <LazyStudioPanel />
+      break
+    case 'library':
+      panelContent = <LazyLibraryPanel />
+      break
     default: {
-      return renderPluginPanel(tab)
+      panelContent = renderPluginPanel(tab)
     }
   }
+
+  return (
+    <>
+      <PanelNavigationCommitMarker panel={tab} />
+      {panelContent}
+      <KeepAliveLogsPanel active={showLogsPanel} />
+    </>
+  )
 }
 
 function LocalModeUnavailable({ panel }: { panel: string }) {

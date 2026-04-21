@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 import { MODEL_CATALOG } from '@/lib/models'
+import { buildChatConversationIndex } from '@/store/chat-derived'
 
 export type JsonPrimitive = string | number | boolean | null
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue | undefined }
@@ -37,6 +38,13 @@ export interface LogEntry {
   data?: JsonValue
 }
 
+export interface LogViewerCacheState {
+  availableSources: string[]
+  logFilePath: string | null
+  hasLoadedInitialData: boolean
+  lastLoadedAt: number | null
+}
+
 export interface CronJob {
   id?: string
   name: string
@@ -64,15 +72,6 @@ export interface SpawnRequest {
   completedAt?: number
   result?: string
   error?: string
-}
-
-export interface MemoryFile {
-  path: string
-  name: string
-  type: 'file' | 'directory'
-  size?: number
-  modified?: number
-  children?: MemoryFile[]
 }
 
 export interface TokenUsage {
@@ -229,6 +228,8 @@ export interface ChatMessage {
   pendingStatus?: 'sending' | 'sent' | 'failed'
 }
 
+type ChatConversationMessages = Record<string, ChatMessage[]>
+
 export interface Conversation {
   id: string
   name?: string
@@ -242,6 +243,11 @@ export interface Conversation {
     agent?: string
     displayName?: string
     colorTag?: string
+    profile?: string
+    profileLabel?: string
+    runtimeProfileName?: string
+    runtimeProfileLabel?: string
+    source?: string
     model?: string
     tokens?: string
     workingDir?: string | null
@@ -467,6 +473,8 @@ interface MissionControlStore {
     search?: string
   }
   addLog: (log: LogEntry) => void
+  replaceLogs: (logs: LogEntry[]) => void
+  prependLogs: (logs: LogEntry[]) => void
   setLogFilters: (filters: Partial<{
     level?: string
     source?: string
@@ -474,6 +482,8 @@ interface MissionControlStore {
     search?: string
   }>) => void
   clearLogs: () => void
+  logViewerCache: LogViewerCacheState
+  setLogViewerCache: (updates: Partial<LogViewerCacheState>) => void
 
   // Agent Spawning
   spawnRequests: SpawnRequest[]
@@ -484,18 +494,6 @@ interface MissionControlStore {
   cronJobs: CronJob[]
   setCronJobs: (jobs: CronJob[]) => void
   updateCronJob: (name: string, updates: Partial<CronJob>) => void
-
-  // Memory Browser
-  memoryFiles: MemoryFile[]
-  selectedMemoryFile: string | null
-  memoryContent: string | null
-  memoryFileLinks: { wikiLinks: unknown[]; incoming: string[]; outgoing: string[] } | null
-  memoryHealth: unknown | null
-  setMemoryFiles: (files: MemoryFile[]) => void
-  setSelectedMemoryFile: (path: string | null) => void
-  setMemoryContent: (content: string | null) => void
-  setMemoryFileLinks: (links: { wikiLinks: unknown[]; incoming: string[]; outgoing: string[] } | null) => void
-  setMemoryHealth: (health: unknown | null) => void
 
   // Token Usage & Cost Tracking
   tokenUsage: TokenUsage[]
@@ -509,6 +507,8 @@ interface MissionControlStore {
 
   // Agent Chat
   chatMessages: ChatMessage[]
+  chatMessagesByConversation: ChatConversationMessages
+  chatMessageGroupsByConversation: Record<string, import('@/store/chat-derived').ChatMessageGroup[]>
   conversations: Conversation[]
   activeConversation: string | null
   chatInput: string
@@ -575,10 +575,6 @@ interface MissionControlStore {
   skillsTotal: number
   setSkillsData: (skills: { id: string; name: string; source: string; path: string; description?: string; registry_slug?: string | null; security_status?: string | null }[], groups: { source: string; path: string; skills: { id: string; name: string; source: string; path: string; description?: string; registry_slug?: string | null; security_status?: string | null }[] }[], total: number) => void
 
-  // Memory Graph (persisted across tab switches)
-  memoryGraphAgents: { name: string; dbSize: number; totalChunks: number; totalFiles: number; files: { path: string; chunks: number; textSize: number }[] }[] | null
-  setMemoryGraphAgents: (agents: { name: string; dbSize: number; totalChunks: number; totalFiles: number; files: { path: string; chunks: number; textSize: number }[] }[]) => void
-
   // Security Posture
   securityPosture?: { score: number; level: string }
   setSecurityPosture: (posture: { score: number; level: string } | undefined) => void
@@ -593,11 +589,13 @@ interface MissionControlStore {
 
   // UI State
   activeTab: string
+  optimisticPanel: string | null
   sidebarExpanded: boolean
   collapsedGroups: string[]
   liveFeedOpen: boolean
   headerDensity: 'focus' | 'compact'
   setActiveTab: (tab: string) => void
+  setOptimisticPanel: (tab: string | null) => void
   toggleSidebar: () => void
   setSidebarExpanded: (expanded: boolean) => void
   toggleGroup: (groupId: string) => void
@@ -695,6 +693,12 @@ export const useMissionControl = create<MissionControlStore>()(
     // Logs
     logs: [],
     logFilters: {},
+    logViewerCache: {
+      availableSources: [],
+      logFilePath: null,
+      hasLoadedInitialData: false,
+      lastLoadedAt: null,
+    },
     addLog: (log) =>
       set((state) => {
         // Check if log already exists to prevent duplicates
@@ -710,11 +714,55 @@ export const useMissionControl = create<MissionControlStore>()(
           logs: [log, ...state.logs].slice(0, 1000), // Keep last 1000 logs
         }
       }),
+    replaceLogs: (logs) =>
+      set(() => {
+        const seen = new Set<string>()
+        const normalized = logs.filter((entry) => {
+          if (!entry?.id || seen.has(entry.id)) return false
+          seen.add(entry.id)
+          return true
+        }).slice(0, 1000)
+
+        return {
+          logs: normalized,
+          logViewerCache: {
+            ...get().logViewerCache,
+            hasLoadedInitialData: true,
+            lastLoadedAt: Date.now(),
+          },
+        }
+      }),
+    prependLogs: (logs) =>
+      set((state) => {
+        if (logs.length === 0) return state
+        const seen = new Set<string>()
+        const normalized = [...logs, ...state.logs].filter((entry) => {
+          if (!entry?.id || seen.has(entry.id)) return false
+          seen.add(entry.id)
+          return true
+        }).slice(0, 1000)
+
+        return {
+          logs: normalized,
+          logViewerCache: {
+            ...state.logViewerCache,
+            hasLoadedInitialData: true,
+            lastLoadedAt: Date.now(),
+          },
+        }
+      }),
     setLogFilters: (filters) =>
       set((state) => ({
         logFilters: { ...state.logFilters, ...filters },
       })),
     clearLogs: () => set({ logs: [] }),
+    setLogViewerCache: (updates) =>
+      set((state) => ({
+        logViewerCache: {
+          ...state.logViewerCache,
+          ...updates,
+        },
+      })),
 
     // Agent Spawning
     spawnRequests: [],
@@ -738,18 +786,6 @@ export const useMissionControl = create<MissionControlStore>()(
           job.name === name ? { ...job, ...updates } : job
         ),
       })),
-
-    // Memory Browser
-    memoryFiles: [],
-    selectedMemoryFile: null,
-    memoryContent: null,
-    memoryFileLinks: null,
-    memoryHealth: null,
-    setMemoryFiles: (files) => set({ memoryFiles: files }),
-    setSelectedMemoryFile: (path) => set({ selectedMemoryFile: path }),
-    setMemoryContent: (content) => set({ memoryContent: content }),
-    setMemoryFileLinks: (links) => set({ memoryFileLinks: links }),
-    setMemoryHealth: (health) => set({ memoryHealth: health }),
 
     // Token Usage
     tokenUsage: [],
@@ -907,10 +943,6 @@ export const useMissionControl = create<MissionControlStore>()(
     skillsTotal: 0,
     setSkillsData: (skills, groups, total) => set({ skillsList: skills, skillGroups: groups, skillsTotal: total }),
 
-    // Memory Graph
-    memoryGraphAgents: null,
-    setMemoryGraphAgents: (agents) => set({ memoryGraphAgents: agents }),
-
     // Security Posture
     securityPosture: undefined,
     setSecurityPosture: (posture) => set({ securityPosture: posture }),
@@ -944,6 +976,7 @@ export const useMissionControl = create<MissionControlStore>()(
 
     // UI State — sidebar & layout persistence
     activeTab: 'overview',
+    optimisticPanel: null,
     sidebarExpanded: (() => {
       if (typeof window === 'undefined') return false
       try { return localStorage.getItem('mc-sidebar-expanded') === 'true' } catch { return false }
@@ -967,6 +1000,7 @@ export const useMissionControl = create<MissionControlStore>()(
       } catch { return 'focus' as const }
     })(),
     setActiveTab: (tab) => set({ activeTab: tab }),
+    setOptimisticPanel: (panel) => set({ optimisticPanel: panel }),
     toggleSidebar: () =>
       set((state) => {
         const next = !state.sidebarExpanded
@@ -1098,12 +1132,23 @@ export const useMissionControl = create<MissionControlStore>()(
 
     // Agent Chat
     chatMessages: [],
+    chatMessagesByConversation: {},
+    chatMessageGroupsByConversation: {},
     conversations: [],
     activeConversation: null,
     chatInput: '',
     isSendingMessage: false,
     chatPanelOpen: false,
-    setChatMessages: (messages) => set({ chatMessages: messages.slice(-500) }),
+    setChatMessages: (messages) =>
+      set(() => {
+        const trimmedMessages = messages.slice(-500)
+        const derived = buildChatConversationIndex(trimmedMessages)
+        return {
+          chatMessages: trimmedMessages,
+          chatMessagesByConversation: derived.messagesByConversation,
+          chatMessageGroupsByConversation: derived.groupsByConversation,
+        }
+      }),
     addChatMessage: (message) =>
       set((state) => {
         // Deduplicate: skip if a message with the same server ID already exists
@@ -1111,47 +1156,77 @@ export const useMissionControl = create<MissionControlStore>()(
           return state
         }
         const messages = [...state.chatMessages, message].slice(-500)
+        const derived = buildChatConversationIndex(messages)
         const conversations = state.conversations.map((conv) =>
           conv.id === message.conversation_id
             ? { ...conv, lastMessage: message, updatedAt: message.created_at }
             : conv
         )
-        return { chatMessages: messages, conversations }
+        return {
+          chatMessages: messages,
+          chatMessagesByConversation: derived.messagesByConversation,
+          chatMessageGroupsByConversation: derived.groupsByConversation,
+          conversations,
+        }
       }),
     replacePendingMessage: (tempId, message) =>
-      set((state) => ({
-        chatMessages: state.chatMessages.map(m =>
-          m.id === tempId ? { ...message, pendingStatus: 'sent' } : m
-        ),
-      })),
+      set((state) => {
+        const nextMessages = state.chatMessages.map((existingMessage) =>
+          existingMessage.id === tempId ? { ...message, pendingStatus: 'sent' as const } : existingMessage
+        )
+        const derived = buildChatConversationIndex(nextMessages)
+        return {
+          chatMessages: nextMessages,
+          chatMessagesByConversation: derived.messagesByConversation,
+          chatMessageGroupsByConversation: derived.groupsByConversation,
+        }
+      }),
     updatePendingMessage: (tempId, updates) =>
-      set((state) => ({
-        chatMessages: state.chatMessages.map(m =>
-          m.id === tempId ? { ...m, ...updates } : m
-        ),
-      })),
+      set((state) => {
+        const nextMessages = state.chatMessages.map((existingMessage) =>
+          existingMessage.id === tempId ? { ...existingMessage, ...updates } : existingMessage
+        )
+        const derived = buildChatConversationIndex(nextMessages)
+        return {
+          chatMessages: nextMessages,
+          chatMessagesByConversation: derived.messagesByConversation,
+          chatMessageGroupsByConversation: derived.groupsByConversation,
+        }
+      }),
     removePendingMessage: (tempId) =>
-      set((state) => ({
-        chatMessages: state.chatMessages.filter(m => m.id !== tempId),
-      })),
+      set((state) => {
+        const nextMessages = state.chatMessages.filter((message) => message.id !== tempId)
+        const derived = buildChatConversationIndex(nextMessages)
+        return {
+          chatMessages: nextMessages,
+          chatMessagesByConversation: derived.messagesByConversation,
+          chatMessageGroupsByConversation: derived.groupsByConversation,
+        }
+      }),
     setConversations: (conversations) => set({ conversations }),
     setActiveConversation: (conversationId) => set({ activeConversation: conversationId }),
     setChatInput: (input) => set({ chatInput: input }),
     setIsSendingMessage: (loading) => set({ isSendingMessage: loading }),
     setChatPanelOpen: (open) => set({ chatPanelOpen: open }),
     markConversationRead: (conversationId) =>
-      set((state) => ({
-        conversations: state.conversations.map((conv) =>
-          conv.id === conversationId
-            ? { ...conv, unreadCount: 0 }
-            : conv
-        ),
-        chatMessages: state.chatMessages.map((msg) =>
+      set((state) => {
+        const nextMessages = state.chatMessages.map((msg) =>
           msg.conversation_id === conversationId && !msg.read_at
             ? { ...msg, read_at: Math.floor(Date.now() / 1000) }
             : msg
         )
-      })),
+        const derived = buildChatConversationIndex(nextMessages)
+        return {
+          conversations: state.conversations.map((conv) =>
+          conv.id === conversationId
+            ? { ...conv, unreadCount: 0 }
+            : conv
+          ),
+          chatMessages: nextMessages,
+          chatMessagesByConversation: derived.messagesByConversation,
+          chatMessageGroupsByConversation: derived.groupsByConversation,
+        }
+      }),
 
     // Terminal split panes + attention
     splitPanes: [],

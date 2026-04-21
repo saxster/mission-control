@@ -4,7 +4,9 @@ import Image from 'next/image'
 import { useState, useEffect } from 'react'
 import { useTranslations } from 'next-intl'
 import { useMissionControl } from '@/store'
+import { useMissionControlNavState } from '@/store/selectors'
 import { useNavigateToPanel, usePrefetchPanel } from '@/lib/navigation'
+import { isMissionControlHarnessTestMode } from '@/lib/mission-control-harness'
 import { Button } from '@/components/ui/button'
 import { APP_VERSION } from '@/lib/version'
 import { getPluginNavItems } from '@/lib/plugins'
@@ -34,7 +36,8 @@ const navGroups: NavGroup[] = [
       { id: 'chat', label: 'Chat', icon: <ChatIcon />, priority: false, essential: true },
       { id: 'channels', label: 'Channels', icon: <ChannelsIcon />, priority: false },
       { id: 'skills', label: 'Skills', icon: <SkillsIcon />, priority: false },
-      { id: 'memory', label: 'Memory', icon: <MemoryIcon />, priority: false },
+      { id: 'knowledge-base', label: 'Knowledge Base', icon: <MemoryIcon />, priority: false },
+      { id: 'obsidian', label: 'Obsidian', icon: <IntegrationsIcon />, priority: false },
     ],
   },
   {
@@ -48,6 +51,14 @@ const navGroups: NavGroup[] = [
       { id: 'exec-approvals', label: 'Approvals', icon: <ApprovalsIcon />, priority: false },
       { id: 'office', label: 'Office', icon: <OfficeIcon />, priority: false },
       { id: 'monitor', label: 'Monitor', icon: <MonitorIcon />, priority: false },
+    ],
+  },
+  {
+    id: 'create',
+    label: 'CREATE',
+    items: [
+      { id: 'studio', label: 'Studio', icon: <StudioIcon />, priority: false },
+      { id: 'library', label: 'Library', icon: <LibraryIcon />, priority: false },
     ],
   },
   {
@@ -89,7 +100,7 @@ const navItemTranslationKeys: Record<string, string> = {
   chat: 'chat',
   channels: 'channels',
   skills: 'skills',
-  memory: 'memory',
+  'knowledge-base': 'knowledgeBase',
   activity: 'activity',
   logs: 'logs',
   'cost-tracker': 'costTracker',
@@ -109,10 +120,13 @@ const navItemTranslationKeys: Record<string, string> = {
   integrations: 'integrations',
   debug: 'debug',
   settings: 'settings',
+  studio: 'studio',
+  library: 'library',
 }
 
 // Map group IDs to translation keys in the 'nav.group' namespace
 const groupTranslationKeys: Record<string, string> = {
+  create: 'create',
   observe: 'observe',
   automate: 'automate',
   admin: 'admin',
@@ -125,7 +139,7 @@ const gatewayOnlyPanels = new Set([
 const adminOnlyPanels = new Set<string>([])
 
 export function NavRail() {
-  const { activeTab, connection, dashboardMode, currentUser, activeTenant, tenants, osUsers, setActiveTenant, fetchTenants, fetchOsUsers, activeProject, projects, setActiveProject, fetchProjects, sidebarExpanded, collapsedGroups, toggleSidebar, toggleGroup, defaultOrgName, interfaceMode, setInterfaceMode } = useMissionControl()
+  const { activeTab, connection, dashboardMode, currentUser, activeTenant, tenants, osUsers, setActiveTenant, fetchTenants, fetchOsUsers, activeProject, projects, setActiveProject, fetchProjects, sidebarExpanded, collapsedGroups, toggleSidebar, toggleGroup, defaultOrgName, interfaceMode, setInterfaceMode } = useMissionControlNavState()
   const navigateToPanel = useNavigateToPanel()
   const prefetchPanel = usePrefetchPanel()
   const tn = useTranslations('nav')
@@ -142,6 +156,7 @@ export function NavRail() {
   }
   const isLocal = dashboardMode === 'local'
   const isAdmin = currentUser?.role === 'admin'
+  const isHarnessTestMode = isMissionControlHarnessTestMode()
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set())
 
   function toggleParent(id: string) {
@@ -236,6 +251,7 @@ export function NavRail() {
       <nav
         role="navigation"
         aria-label="Main navigation"
+        data-mc-nav={isHarnessTestMode ? 'ready' : undefined}
         className={`hidden md:flex flex-col bg-gradient-to-b from-card to-background border-r border-border shrink-0 transition-all duration-200 ease-in-out ${
           sidebarExpanded ? 'w-[220px]' : 'w-14'
         }`}
@@ -500,6 +516,7 @@ function NavButton({ item, active, expanded, onClick, onPrefetch, nested }: {
         onClick={onClick}
         onMouseEnter={onPrefetch}
         onFocus={onPrefetch}
+        data-panel-id={item.id}
         aria-current={active ? 'page' : undefined}
         className={`w-full flex items-center gap-2 px-2 h-auto rounded-lg text-left justify-start relative ${
           nested ? 'py-1' : 'py-1.5'
@@ -525,6 +542,7 @@ function NavButton({ item, active, expanded, onClick, onPrefetch, nested }: {
       onClick={onClick}
       onMouseEnter={onPrefetch}
       onFocus={onPrefetch}
+      data-panel-id={item.id}
       title={item.label}
       aria-current={active ? 'page' : undefined}
       className={`rounded-lg group relative ${
@@ -1520,6 +1538,29 @@ function MonitorIcon() {
       <rect x="1" y="2" width="14" height="10" rx="1.5" />
       <polyline points="4,9 6,6 8,8 12,4" />
       <path d="M5 14h6" />
+    </svg>
+  )
+}
+
+function StudioIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="5.5" />
+      <circle cx="8" cy="8" r="2" />
+      <path d="M8 2.5V1" />
+      <path d="M8 15v-1.5" />
+      <path d="M2.5 8H1" />
+      <path d="M15 8h-1.5" />
+    </svg>
+  )
+}
+
+function LibraryIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2" width="5" height="6" rx="1" />
+      <rect x="9" y="2" width="5" height="6" rx="1" />
+      <rect x="2" y="10" width="12" height="4" rx="1" />
     </svg>
   )
 }

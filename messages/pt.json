@@ -85,6 +85,7 @@
     "channels": "Canais",
     "skills": "Habilidades",
     "memory": "Memória",
+    "knowledgeBase": "Base de Conhecimento",
     "activity": "Atividade",
     "logs": "Registros",
     "costTracker": "Rastreador de custos",
@@ -155,6 +156,7 @@
     "loadingActiveSessions": "Carregando sessões ativas",
     "hydratingWorkspaceBoard": "Inicializando painel de trabalho",
     "mappingMemoryGraph": "Mapeando grafo de memória",
+    "mappingKnowledgeBaseGraph": "Mapeando grafo da base de conhecimento",
     "indexingSkillCatalog": "Indexando catálogo de habilidades"
   },
   "header": {
@@ -191,7 +193,7 @@
     "goToNotifications": "Ir para Notificações",
     "goToTokenUsage": "Ir para Uso de tokens",
     "goToLogs": "Ir para Registros",
-    "goToMemoryBrowser": "Ir para Explorador de memória",
+    "goToKnowledgeBase": "Ir para Base de Conhecimento",
     "goToIntegrations": "Ir para Integrações",
     "goToSettings": "Ir para Configurações",
     "goToGateways": "Ir para Gateways",

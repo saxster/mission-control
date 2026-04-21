@@ -639,4 +639,3 @@ export function requireRole(
   }
   return { user }
 }
-

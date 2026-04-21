@@ -72,7 +72,8 @@ const dim = hsl(voidAccents.cyan, 0.4)      // "hsl(187 82% 53% / 0.4)"
 | Body/UI | Inter | `--font-sans` | `font-sans` |
 | Code/Data | JetBrains Mono | `--font-mono` | `font-mono` |
 
-Both fonts are loaded via `next/font/google` (self-hosted, no external requests).
+Mission Control uses offline-safe CSS font stacks through `--font-sans` and `--font-mono`.
+If Inter or JetBrains Mono are installed locally they will be used first; otherwise the app falls back to system UI and monospace fonts with no build-time network dependency.
 
 ### Type Scale
 

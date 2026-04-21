@@ -6,6 +6,16 @@ All notable changes to Mission Control are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- `/api/memory/*` is now a deprecated compatibility layer over the canonical `/api/knowledge-base/*` backend
+- New and existing automation should migrate to `/api/knowledge-base/*` during the current compatibility window
+- Deprecated `/api/memory/*` responses now emit `Deprecation`, `Sunset`, and successor `Link` headers, and Mission Control logs legacy route hits for removal readiness
+- Knowledge Base authoring now enforces source-governance guardrails, blocks weak high-risk inputs by default, and records explicit low-quality overrides for auditability
+- Knowledge Base governance now persists `unreviewed` review state, performs bounded live source verification for high-risk domains, exposes a governance queue/backfill API, and de-prioritizes weak or overridden pages in search results
+
+### Planned Removal
+- The legacy `/api/memory/*` compatibility routes are intended to stay for one release and then be removed in the following release if no external consumers still depend on them
+
 ---
 
 ## [2.0.1] - 2026-03-18

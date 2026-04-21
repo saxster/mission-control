@@ -61,6 +61,11 @@ test.describe('API Index / Discovery', () => {
 
     expect(body).toHaveProperty('docs')
     expect(body.docs.openapi).toBe('/api/docs')
+    expect(body).toHaveProperty('knowledge_base')
+    expect(body.knowledge_base.tree).toBe('/api/knowledge-base/tree')
+    expect(body.knowledge_base.governance).toBe('/api/knowledge-base/governance')
+    expect(body).toHaveProperty('deprecated_compatibility')
+    expect(body.deprecated_compatibility.memory).toBe('/api/memory')
   })
 
   test('tags are consistent strings', async ({ request }) => {
