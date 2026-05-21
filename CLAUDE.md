@@ -77,6 +77,7 @@ Database path: defaults to `<MISSION_CONTROL_DATA_DIR>/mission-control.db`.
 Mission Control provides three interfaces for autonomous agents:
 
 ### MCP Server (recommended for agents)
+
 ```bash
 # Add to any Claude Code agent:
 claude mcp add mission-control -- node /path/to/mission-control/scripts/mc-mcp-server.cjs
@@ -84,10 +85,12 @@ claude mcp add mission-control -- node /path/to/mission-control/scripts/mc-mcp-s
 # Environment config:
 MC_URL=http://127.0.0.1:3000 MC_API_KEY=<key>
 ```
-35 tools: agents, tasks, sessions, memory, soul, comments, tokens, skills, cron, status.
-See `docs/cli-agent-control.md` for full tool list.
+
+Exposes tools spanning agents, tasks, sessions, memory, soul, comments, tokens, skills, cron, and status.
+See `docs/cli-agent-control.md` for the full, current tool list.
 
 ### CLI
+
 ```bash
 pnpm mc agents list --json
 pnpm mc tasks queue --agent Aegis --max-capacity 2 --json
@@ -95,6 +98,7 @@ pnpm mc events watch --types agent,task
 ```
 
 ### REST API
+
 OpenAPI spec: `openapi.json`. Interactive docs at `/docs` when running.
 
 ## Common Pitfalls
